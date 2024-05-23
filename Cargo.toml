@@ -1,0 +1,12 @@
+[package]
+name = "Neuron"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+heed = "^0.20.1"
+riven = "^2.50"
+tokio = { version = "^1.37", features = ["rt", "macros"] }
+anyhow = "^1.0.86"
+clap = { version = "^4.5.4", features = ["default", "derive"] }
+base64 = "^0.22.1"
