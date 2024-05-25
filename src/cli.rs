@@ -11,7 +11,7 @@ pub struct Args {
     /// The regions to work on
     /// (https://docs.rs/riven/latest/riven/consts/enum.RegionalRoute.html)
     #[arg(short, long, default_values_t = [AMERICAS, ASIA, EUROPE, SEA])]
-    pub regions: Vec<RegionalRoute>,
+    pub region: Vec<RegionalRoute>,
     
     /// MatchIds to be used as "Starting Handles", 
     /// as in providing some matches for an empty database

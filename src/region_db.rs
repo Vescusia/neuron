@@ -1,59 +1,63 @@
-use std::collections::hash_map::Values;
-use heed::Database;
 use riven::consts::RegionalRoute;
+use redb::{Database, Key, TableDefinition, Value};
 
 use std::collections::HashMap;
+use std::collections::hash_map::Values;
 
 
-#[derive(Debug)]
-pub struct RegionDB<KC: 'static, DC: 'static> {
-    pub env: heed::Env,
-    dbs: HashMap<RegionalRoute, Database<KC, DC>>
+pub struct RegionDB<'a, K: Key + 'static, V: Value + 'static> {
+    pub db: Database,
+    tables: HashMap<RegionalRoute, TableDefinition<'a, K, V>>
 }
 
-impl<KC, DC> RegionDB<KC, DC> {
+impl<'a, K: Key, V: Value> RegionDB<'a, K, V> {
     pub fn new<P: AsRef<str>>(path: P, regions: &[RegionalRoute]) -> anyhow::Result<Self> {
-        std::fs::create_dir_all(path.as_ref())?;
-
         // open db file
-        let env = unsafe {
-            heed::EnvOpenOptions::new()
-                .max_dbs(16)
-                .open(path.as_ref())
-        }?;
-        let mut wtxn = env.write_txn()?;
+        let db = Database::create(path.as_ref())?;
         
         // create HashMap
-        let mut dbs = HashMap::new();
+        let mut tables = HashMap::new();
         
-        // create dbs
-        for region in regions {
-            dbs.insert(
-                *region,
-                env.create_database(&mut wtxn, Some(&region.to_string()))?
+        // insert table defs
+        for &region in regions {
+            tables.insert(
+                region,
+                TableDefinition::new(region.into())
             );
+        }
+        
+        // create tables
+        let wtxn = db.begin_write()?;
+        for &table in tables.values() {
+            wtxn.open_table(table)?;
         }
         wtxn.commit()?;
         
+        // fin~
         Ok(Self{
-            env,
-            dbs
+            db,
+            tables,
         })
     }
     
-    pub fn get(&self, region: &RegionalRoute) -> Option<&Database<KC, DC>> {
-        self.dbs.get(region)
+    pub fn tables(&self) -> Values<RegionalRoute, TableDefinition<'_, K, V>> {
+        self.tables.values()
     }
     
-    pub fn dbs(&self) -> Values<RegionalRoute, Database<KC, DC>> {
-        self.dbs.values()
+    pub fn read(&self) -> redb::Result<redb::ReadTransaction, redb::TransactionError> {
+        self.db.begin_read()
     }
     
-    pub fn wtxn(&self) -> heed::Result<heed::RwTxn> {
-        self.env.write_txn()
+    pub fn write(&self) -> redb::Result<redb::WriteTransaction, redb::TransactionError> {
+        self.db.begin_write()
     }
-    
-    pub fn rtxn(&self) -> heed::Result<heed::RoTxn> {
-        self.env.read_txn()
+}
+
+
+impl<'a, K: Key, V: Value> std::ops::Index<RegionalRoute> for RegionDB<'a, K, V> {
+    type Output = TableDefinition<'a, K, V>;
+
+    fn index(&self, index: RegionalRoute) -> &Self::Output {
+        self.tables.get(&index).expect("Invalid RegionalRoute!")
     }
 }
