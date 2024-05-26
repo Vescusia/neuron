@@ -1,4 +1,5 @@
 use std::io::Write;
+use riven::consts::Champion;
 
 fn main() {
     let out_dir = std::env::var_os("OUT_DIR").unwrap();
@@ -15,24 +16,9 @@ fn main() {
 }
 
 fn write_conversion(fd: std::fs::File)  {
-    // get body
-    let uri = "https://raw.githubusercontent.com/MingweiSamuel/Riven/v/2.x.x/riven/src/consts/champion.rs";
-    println!("Getting {uri}...");
-    let body = reqwest::blocking::get(uri)
-        .unwrap()
-        .text()
-        .unwrap();
-    println!("Response received.");
-    
-    // extract only the "enum" definition
-    let regex = regex::Regex::new(r"(pub newtype_enum Champion\(i16\) \{\n)([^}]*)").unwrap();
-    let captures = regex.captures(&body).unwrap();
-    let body = &captures[2];
-    println!("Body extracted: {body}");
-    
     // buffer file
     let mut fd = std::io::BufWriter::new(fd);
-    
+
     println!("Starting writes...");
     // write import
     fd.write_all("use riven::consts::Champion;\n".as_bytes()).unwrap();
@@ -40,32 +26,47 @@ fn write_conversion(fd: std::fs::File)  {
     fd.write_all("/// This is sad.\npub fn champ_to_u8(champ: Champion) -> u8 {\n".as_bytes()).unwrap();
     // write body
     fd.write_all("\tmatch champ {\n".as_bytes()).unwrap();
-    
+
+    // sort champs by order of addition (somewhat)
+    let mut all_known = Champion::ALL_KNOWN;
+    all_known.sort_unstable();
+
     // write the champion map lines
-    let mut i: isize = -1;
-    for line in body.lines() {
-        // prepare line
-        let line = line.trim();
-        if line.starts_with("///") || line.is_empty() {
-            continue;
+    let mut i: u8 = 0;
+    for champ in all_known {
+        if champ == Champion::NONE {
+            continue
         }
-        // skip the "NONE = -1" (first) entry
-        else if i == -1 {
-            i = 0;
-            continue;
-        }
-        
+
+        // build line
         let mut builder = String::new();
         builder.push_str("\t\tChampion::");
-        builder.push_str(line.split('=').next().unwrap());
-        builder.push_str("=> ");
-        builder.push_str(&i.to_string());
-        builder.push(','); builder.push('\n');
+
+        // sanitize name
+        let name = match champ {
+            Champion::LE_BLANC => "le_blanc",
+            c => c.name().unwrap()
+        }.to_uppercase()
+            .replace(['\'', ' ', '&', '.'], "_");
+        // remove multiple '_'
+        let chars: Vec<char> = name.chars().collect();
+        let mut name: String = chars.windows(2)
+            .filter(|s| s[0] != '_' || s[1] != '_')
+            .map(|s| s[0])
+            .collect();
+        name.push(*chars.last().unwrap());
+        builder.push_str(&name);
         
-        i += 1;
+        // map to u8
+        builder.push_str(" => ");
+        builder.push_str(&i.to_string());
+
+        // finish line
+        builder.push(','); builder.push('\n');
         fd.write_all(builder.as_bytes()).unwrap();
+        i += 1;
     }
-    
+
     // add else clause
     fd.write_all("\t\tchamp => panic!(\"Champion {champ} not mapped!\")\n".as_bytes()).unwrap();
     

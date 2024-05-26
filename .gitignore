@@ -1,4 +1,5 @@
 /target
 /.idea
-/player_db
-/match_db
+/player.redb
+/match.redb
+/comp.redb
