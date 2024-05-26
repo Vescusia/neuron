@@ -11,7 +11,7 @@ mod encoded_puuid;
 include!(concat!(env!("OUT_DIR"), "/champ_to_u8.rs"));
 
 
-const COMP_DB_TABLE: redb::TableDefinition<u64, i16> = redb::TableDefinition::new("comps");
+const COMP_DB_TABLE: redb::TableDefinition<u64, (i16, u16)> = redb::TableDefinition::new("comps");
 
 
 //noinspection ALL
@@ -154,10 +154,15 @@ async fn main() -> anyhow::Result<()> {
                     let wtxn = comp_db.begin_write()?;
                     {
                         let mut db = wtxn.open_table(COMP_DB_TABLE)?;
-                        let old = db.insert(packed, result)?
+                        // get maybe existing
+                        let old = db.get(packed)?
                             .map(|m| m.value());
-                        if let Some(old) = old {
-                            db.insert(packed, old + result)?;
+                        // update or insert new
+                        if let Some((balance, games)) = old {
+                            db.insert(packed, (balance+result, games+1))?;
+                        } 
+                        else {
+                            db.insert(packed, (result, 1))?;
                         }
                     }
                     wtxn.commit()?;
