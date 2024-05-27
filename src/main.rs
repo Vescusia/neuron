@@ -78,28 +78,29 @@ async fn main() -> anyhow::Result<()> {
             // get first match that has not been explored yet
             let rtxn = match_db.read()?;
             let db = rtxn.open_table(match_db[region])?;
-            let unexplored_match = db.iter()?
+            let unexplored_match_id = db.iter()?
                 .filter_map(|i| i.ok())
-                .find(|(_id, explored)| !explored.value());
+                .find(|(_id, explored)| !explored.value())
+                .map(|(u_match, _)| u_match.value());
             
             // if we actually found a match
-            if let Some((unexplored_match_id, _)) = unexplored_match {
-                print!("\r[{region}] Exploring new match {} - {} total      ", unexplored_match_id.value(), games_found + games_ignored);
+            if let Some(unexplored_match_id) = unexplored_match_id {
+                print!("\r[{region}] Exploring new match {} - {} total      ", unexplored_match_id, games_found + games_ignored);
                 
                 // explore match
                 let unexplored_match = riot_api.match_v5()
-                    .get_match(region, &EncodedMatchId(unexplored_match_id.value()).to_string())
+                    .get_match(region, &EncodedMatchId(unexplored_match_id).to_string())
                     .await?;
                 
                 if let Some(u_match) = unexplored_match {
                     // check match explored
                     let wtxn = match_db.write()?;
                     wtxn.open_table(match_db[region])?.insert(
-                        unexplored_match_id.value(),
+                        unexplored_match_id,
                         true
                     )?;
                     wtxn.commit()?;
-                    
+
                     // ignore match if it is not the classic game mode
                     if u_match.info.game_mode != riven::consts::GameMode::CLASSIC {
                         games_ignored += 1;
@@ -168,7 +169,14 @@ async fn main() -> anyhow::Result<()> {
                     wtxn.commit()?;
                 }
                 else {
-                    println!("Invalid MatchId in Database!");
+                    println!("Invalid MatchId {} in Database!", EncodedMatchId(unexplored_match_id));
+                    
+                    // remove invalid match
+                    let wtxn = match_db.write()?;
+                    wtxn.open_table(match_db[region])?
+                        .remove(unexplored_match_id)?;
+                    wtxn.commit()?;
+                    
                     continue;
                 }
             }
