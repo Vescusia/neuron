@@ -87,9 +87,9 @@ async fn main() -> anyhow::Result<()> {
                 // explore match
                 let unexplored_match = riot_api.match_v5()
                     .get_match(region, &EncodedMatchId(unexplored_match_id).to_string())
-                    .await;
+                    .await?;
                 
-                if let Ok(Some(u_match)) = unexplored_match {
+                if let Some(u_match) = unexplored_match {
                     // check match explored
                     let wtxn = match_db.write()?;
                     wtxn.open_table(match_db[region])?.insert(
@@ -166,7 +166,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 else {
                     println!("\nInvalid MatchId {} in Database!", EncodedMatchId(unexplored_match_id));
-                    
+        
                     // remove invalid match
                     let wtxn = match_db.write()?;
                     wtxn.open_table(match_db[region])?

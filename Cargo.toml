@@ -15,7 +15,7 @@ name = "analyzer"
 # Database
 redb = "~2.1"
 # Riot API
-riven = "~2.50"
+riven = ">=2.51.0"
 # Async
 tokio = { version = "~1.37", features = ["rt", "macros", "signal"] }
 # Error Handling
