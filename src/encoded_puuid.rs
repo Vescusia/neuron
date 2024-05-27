@@ -1,14 +1,14 @@
 use base64::Engine;
 
 #[derive(Debug)]
-pub struct PuuidDecoder {
-    buf: [u8; 58]
+pub struct PuuidDecoder<const LEN: usize> {
+    buf: [u8; LEN]
 }
 
-impl PuuidDecoder {
+impl<const LEN: usize> PuuidDecoder<LEN> {
     pub const fn new() -> Self {
         Self{
-            buf: [0u8; 58]
+            buf: [0u8; LEN]
         }
     }
 
@@ -21,14 +21,21 @@ impl PuuidDecoder {
     }
 }
 
-pub struct PuuidEncoder {
-    buf: [u8; 78]
+impl<const LEN: usize> Default for PuuidDecoder<LEN> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-impl PuuidEncoder {
+
+pub struct PuuidEncoder<const LEN: usize> {
+    buf: [u8; LEN]
+}
+
+impl<const LEN: usize> PuuidEncoder<LEN> {
     pub const fn new() -> Self {
         Self{
-            buf: [0u8; 78]
+            buf: [0u8; LEN]
         }
     }
 
@@ -38,5 +45,11 @@ impl PuuidEncoder {
             anyhow::bail!("Invalid encode buffer len!")
         }
         Ok(std::str::from_utf8(&self.buf).expect("Invalid UTF-8 in input!"))
+    }
+}
+
+impl<const LEN: usize> Default for PuuidEncoder<LEN> {
+    fn default() -> Self {
+        Self::new()
     }
 }

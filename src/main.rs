@@ -1,17 +1,14 @@
 use clap::Parser;
 use redb::{ReadableTable, ReadableTableMetadata};
+use riven::consts::Champion;
 
-mod utils;
+
 mod cli;
-mod region_db;
-use region_db::RegionDB;
-mod encoded_match_id;
-use encoded_match_id::EncodedMatchId;
-mod encoded_puuid;
-include!(concat!(env!("OUT_DIR"), "/champ_to_u8.rs"));
+
+use neuron::{ region_db::RegionDB, encoded_match_id::EncodedMatchId };
 
 
-const COMP_DB_TABLE: redb::TableDefinition<u64, (i16, u16)> = redb::TableDefinition::new("comps");
+const COMP_DB_TABLE: redb::TableDefinition<neuron::CompDbK, neuron::CompDbV> = redb::TableDefinition::new("comps");
 
 
 //noinspection ALL
@@ -29,16 +26,16 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     // create puuid en- and decoder
-    let mut puuid_encoder = encoded_puuid::PuuidEncoder::new();
-    let mut puuid_decoder = encoded_puuid::PuuidDecoder::new();
+    let mut puuid_encoder = neuron::encoded_puuid::PuuidEncoder::<78>::new();
+    let mut puuid_decoder = neuron::encoded_puuid::PuuidDecoder::<58>::new();
 
     // create/open databases
-    let mut player_db: RegionDB<&[u8], u8> = RegionDB::new("player.redb", &args.region)?;
-    let match_db: RegionDB<u64, bool> = RegionDB::new("match.redb", &args.region)?;
+    let mut player_db: RegionDB<neuron::PlayerDbK, neuron::PlayerDbV> = RegionDB::new("player.redb", &args.region)?;
+    let match_db = RegionDB::<neuron::MatchDbK, neuron::MatchDbV>::new("match.redb", &args.region)?;
     let mut comp_db = redb::Database::create("comp.redb")?;
 
     // add starting handles
-    utils::add_starting_handles(&match_db, &args.starting_handle)?;
+    neuron::add_starting_handles(&match_db, &args.starting_handle)?;
     
     // check if we have some matches in database
     let wtxn = match_db.write()?;
@@ -90,9 +87,9 @@ async fn main() -> anyhow::Result<()> {
                 // explore match
                 let unexplored_match = riot_api.match_v5()
                     .get_match(region, &EncodedMatchId(unexplored_match_id).to_string())
-                    .await?;
+                    .await;
                 
-                if let Some(u_match) = unexplored_match {
+                if let Ok(Some(u_match)) = unexplored_match {
                     // check match explored
                     let wtxn = match_db.write()?;
                     wtxn.open_table(match_db[region])?.insert(
@@ -130,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
                     wtxn.commit()?;
 
                     // Pack the player champion picks into a 2d array
-                    let mut teams = [[0; 5], [0; 5]];
+                    let mut teams = [[Champion::NONE; 5], [Champion::NONE; 5]];
                     for (i, player) in u_match.info.participants.into_iter().enumerate() {
                         // index into teams
                         let idx = match player.team_id {
@@ -138,22 +135,21 @@ async fn main() -> anyhow::Result<()> {
                             riven::consts::Team::RED => 1,
                             t => anyhow::bail!("Invalid TeamId {t:?}!")
                         };
-                        teams[idx][i % 5] = champ_to_u8(player.champion()?);
+                        teams[idx][i % 5] = player.champion()?;
                     }
+                    // pack into u64
+                    let packed = neuron::packed_comp::PackedComp::pack(teams[0], teams[1]);
                 
                     // swap teams to remain deterministically only based on team comps
                     let mut result = if u_match.info.teams[0].win { 1 } else { -1 };
-                    if utils::cmp_comps_u8(teams[0], teams[1]) == std::cmp::Ordering::Less {
+                    if packed.ord == std::cmp::Ordering::Less {
                         result *= -1;
-                        teams.swap(0, 1);
                     }
-
-                    // pack teams into u64
-                    let packed = utils::pack_teams_u64(teams[0], teams[1]);
 
                     // insert into database
                     let wtxn = comp_db.begin_write()?;
                     {
+                        let packed = packed.packed;
                         let mut db = wtxn.open_table(COMP_DB_TABLE)?;
                         // get maybe existing
                         let old = db.get(packed)?
@@ -169,13 +165,14 @@ async fn main() -> anyhow::Result<()> {
                     wtxn.commit()?;
                 }
                 else {
-                    println!("Invalid MatchId {} in Database!", EncodedMatchId(unexplored_match_id));
+                    println!("\nInvalid MatchId {} in Database!", EncodedMatchId(unexplored_match_id));
                     
                     // remove invalid match
                     let wtxn = match_db.write()?;
                     wtxn.open_table(match_db[region])?
                         .remove(unexplored_match_id)?;
                     wtxn.commit()?;
+                    println!("\t-> Removed.\n");
                     
                     continue;
                 }
@@ -234,6 +231,6 @@ async fn main() -> anyhow::Result<()> {
     println!("CompDB compacted: {}", comp_db.compact()?);
     // println!("MatchDB compacted: {}", matches_db.db.compact()?);  // panics
 
-    println!("Valid Games Analyzed: {games_found} <-> Invalid Games Ignored: {games_ignored} ({}% valid)", (games_found * 100) / (games_found + games_ignored));
+    println!("Classic Games Scraped: {games_found} <-> Non Classic Games Ignored: {games_ignored} ({}% valid)", (games_found * 100) / (games_found + games_ignored));
     Ok(())
 }
