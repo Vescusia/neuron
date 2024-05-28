@@ -5,12 +5,12 @@ use std::collections::HashMap;
 use std::collections::hash_map::Values;
 
 
-pub struct RegionDB<'a, K: Key + 'static, V: Value + 'static> {
+pub struct RegionDB<K: Key + 'static, V: Value + 'static> {
     pub db: Database,
-    tables: HashMap<RegionalRoute, TableDefinition<'a, K, V>>
+    tables: HashMap<RegionalRoute, TableDefinition<'static, K, V>>
 }
 
-impl<'a, K: Key, V: Value> RegionDB<'a, K, V> {
+impl<K: Key, V: Value> RegionDB<K, V> {
     pub fn new<P: AsRef<str>>(path: P, regions: &[RegionalRoute]) -> anyhow::Result<Self> {
         // open db file
         let db = Database::create(path.as_ref())?;
@@ -54,8 +54,8 @@ impl<'a, K: Key, V: Value> RegionDB<'a, K, V> {
 }
 
 
-impl<'a, K: Key, V: Value> std::ops::Index<RegionalRoute> for RegionDB<'a, K, V> {
-    type Output = TableDefinition<'a, K, V>;
+impl<K: Key, V: Value> std::ops::Index<RegionalRoute> for RegionDB<K, V> {
+    type Output = TableDefinition<'static, K, V>;
 
     fn index(&self, index: RegionalRoute) -> &Self::Output {
         self.tables.get(&index).expect("Invalid RegionalRoute!")

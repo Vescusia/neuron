@@ -27,7 +27,7 @@ pub fn add_starting_handles(match_dbs: &RegionDB<u64, bool>, match_ids: &Vec<Str
         if table.get(id.0)?.is_none() {
             table.insert(id.0, false)?;
         }
-        println!("Added {match_id} as Starting Handle.")
+        println!("Added {match_id} for {} as Starting Handle.", id.platform().to_regional())
     }
 
     wtxn.commit()?;
