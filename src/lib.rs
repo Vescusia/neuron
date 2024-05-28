@@ -6,6 +6,7 @@ pub mod encoded_match_id;
 pub mod encoded_puuid;
 pub mod region_db;
 pub mod packed_comp;
+pub mod batch_match_requester;
 
 
 // Key and Value types for Databases

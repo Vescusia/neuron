@@ -97,7 +97,7 @@ fn print_db_stats(path: &std::path::Path) -> anyhow::Result<()> {
     }
 
     // compact DB
-    if !repaired {
+    if repaired {
         println!("\t-> got compacted: {:?}\n", db.compact()?);
     }
 

@@ -1,15 +1,15 @@
 [package]
 name = "neuron"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 build = "build.rs"
-
-[build-dependencies]
-riven = ">=2.50.0"
 
 [[bin]]
 name = "analyzer"
 
+
+[build-dependencies]
+riven = ">=2.50.0"
 
 [dependencies]
 # Database
@@ -17,7 +17,8 @@ redb = "~2.1"
 # Riot API
 riven = ">=2.51.0"
 # Async
-tokio = { version = "~1.37", features = ["rt", "macros", "signal"] }
+tokio = { version = "~1.37", features = ["rt", "macros", "signal", "time"] }
+tokio-stream = { version = "0.1.15", features = ["sync"] }
 # Error Handling
 anyhow = "~1.0"
 # CLI

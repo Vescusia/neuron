@@ -5,7 +5,8 @@ use riven::consts::Champion;
 
 mod cli;
 
-use neuron::{ region_db::RegionDB, encoded_match_id::EncodedMatchId };
+use neuron::{region_db::RegionDB, encoded_match_id::EncodedMatchId};
+use neuron::batch_match_requester::BatchMatchRequester;
 
 
 const COMP_DB_TABLE: redb::TableDefinition<neuron::CompDbK, neuron::CompDbV> = redb::TableDefinition::new("comps");
@@ -20,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Starting Handles Provided: {:?}", args.starting_handle);
     
     // create and check riot api
-    let riot_api = riven::RiotApi::new(args.api_key);
+    let riot_api = std::sync::Arc::new(riven::RiotApi::new(args.api_key));
     riot_api.lol_status_v4()
         .get_platform_data(riven::consts::PlatformRoute::EUW1)
         .await?;
@@ -61,6 +62,12 @@ async fn main() -> anyhow::Result<()> {
     // variables to keep statistics on game validity
     let mut games_found: usize = 0;
     let mut games_ignored: usize = 0;
+
+    // Create Batch Match Requesters (region specfic)
+    let mut batch_requesters = std::collections::HashMap::with_capacity(args.region.len());
+    for &region in &args.region {
+        batch_requesters.insert(region, BatchMatchRequester::new(100, riot_api.clone(), region));
+    }
     
     
     // main loop
@@ -72,109 +79,119 @@ async fn main() -> anyhow::Result<()> {
                 break 'main;
             }
             
-            // get first match that has not been explored yet
+            // get matches that have not been explored yet
             let rtxn = match_db.read()?;
             let db = rtxn.open_table(match_db[region])?;
-            let unexplored_match_id = db.iter()?
-                .filter_map(|i| i.ok())
-                .find(|(_id, explored)| !explored.value())
-                .map(|(u_match, _)| u_match.value());
+            let batch = batch_requesters.get_mut(&region)
+                .unwrap()
+                .request(
+                    db.iter()?
+                        .filter_map(|m| m.ok())
+                        .filter(|(_, explored)| !explored.value())
+                        .map(|(u_match, _)| u_match.value())
+                        .map(EncodedMatchId),
+                    std::time::Duration::from_secs(2)
+                ).await;
             
-            // if we actually found a match
-            if let Some(unexplored_match_id) = unexplored_match_id {
-                print!("\r[{region}] Exploring new match {} - {} total      ", unexplored_match_id, games_found + games_ignored);
-                
-                // explore match
-                let unexplored_match = riot_api.match_v5()
-                    .get_match(region, &EncodedMatchId(unexplored_match_id).to_string())
-                    .await?;
-                
-                if let Some(u_match) = unexplored_match {
-                    // check match explored
-                    let wtxn = match_db.write()?;
-                    wtxn.open_table(match_db[region])?.insert(
-                        unexplored_match_id,
-                        true
-                    )?;
-                    wtxn.commit()?;
-
-                    // ignore match if it is not the classic game mode
-                    if u_match.info.game_mode != riven::consts::GameMode::CLASSIC {
-                        games_ignored += 1;
-                        continue
-                    }
-                    games_found += 1;
-
-                    // put players into database
-                    let wtxn = player_db.write()?;
-                    {
-                        let mut db = wtxn.open_table(player_db[region])?;
-                        for player_id in u_match.metadata.participants {
-                            let puuid = puuid_decoder.decode(player_id)?;
-                            
-                            let player_explored = db.insert(
-                               puuid,
-                               0
-                            )?.map(|e| e.value().max(1) - 1);
-                            
-                            // if the player already was in the database, 
-                            // decrement his exploration by one (at least 0 though)
-                            if let Some(explored) = player_explored {
-                                db.insert(puuid, explored)?;
+            // if we actually found some matches
+            if let Some(unexplored_matches) = batch {
+                // iterate over the matches
+                for (unexplored_match, unexplored_match_id) in unexplored_matches {
+                    // check for error
+                    let unexplored_match = match unexplored_match {
+                        Ok(m) => m,
+                        Err(e) => anyhow::bail!("{e}")
+                    };
+                    let unexplored_match_id = *unexplored_match_id;
+                    print!("\r[{region}] Explored new match {} - {} total      ", unexplored_match_id, games_found + games_ignored);
+                    
+                    if let Some(u_match) = unexplored_match {
+                        // check match explored
+                        let wtxn = match_db.write()?;
+                        wtxn.open_table(match_db[region])?.insert(
+                            unexplored_match_id,
+                            true
+                        )?;
+                        wtxn.commit()?;
+    
+                        // ignore match if it is not the classic game mode
+                        if u_match.info.game_mode != riven::consts::GameMode::CLASSIC {
+                            games_ignored += 1;
+                            continue
+                        }
+                        games_found += 1;
+    
+                        // put players into database
+                        let wtxn = player_db.write()?;
+                        {
+                            let mut db = wtxn.open_table(player_db[region])?;
+                            for player_id in &u_match.metadata.participants {
+                                let puuid = puuid_decoder.decode(player_id)?;
+                                
+                                let player_explored = db.insert(
+                                   puuid,
+                                   0
+                                )?.map(|e| e.value().max(1) - 1);
+                                
+                                // if the player already was in the database, 
+                                // decrement his exploration by one (at least 0 though)
+                                if let Some(explored) = player_explored {
+                                    db.insert(puuid, explored)?;
+                                }
                             }
                         }
-                    }
-                    wtxn.commit()?;
-
-                    // Pack the player champion picks into a 2d array
-                    let mut teams = [[Champion::NONE; 5], [Champion::NONE; 5]];
-                    for (i, player) in u_match.info.participants.into_iter().enumerate() {
-                        // index into teams
-                        let idx = match player.team_id {
-                            riven::consts::Team::BLUE => 0,
-                            riven::consts::Team::RED => 1,
-                            t => anyhow::bail!("Invalid TeamId {t:?}!")
-                        };
-                        teams[idx][i % 5] = player.champion()?;
-                    }
-                    // pack into u64
-                    let packed = neuron::packed_comp::PackedComp::pack(teams[0], teams[1]);
-                
-                    // swap teams to remain deterministically only based on team comps
-                    let mut result = if u_match.info.teams[0].win { 1 } else { -1 };
-                    if packed.ord == std::cmp::Ordering::Less {
-                        result *= -1;
-                    }
-
-                    // insert into database
-                    let wtxn = comp_db.begin_write()?;
-                    {
-                        let packed = packed.packed;
-                        let mut db = wtxn.open_table(COMP_DB_TABLE)?;
-                        // get maybe existing
-                        let old = db.get(packed)?
-                            .map(|m| m.value());
-                        // update or insert new
-                        if let Some((balance, games)) = old {
-                            db.insert(packed, (balance+result, games+1))?;
-                        } 
-                        else {
-                            db.insert(packed, (result, 1))?;
+                        wtxn.commit()?;
+    
+                        // Pack the player champion picks into a 2d array
+                        let mut teams = [[Champion::NONE; 5], [Champion::NONE; 5]];
+                        for (i, player) in u_match.info.participants.iter().enumerate() {
+                            // index into teams
+                            let idx = match player.team_id {
+                                riven::consts::Team::BLUE => 0,
+                                riven::consts::Team::RED => 1,
+                                t => anyhow::bail!("Invalid TeamId {t:?}!")
+                            };
+                            teams[idx][i % 5] = player.champion()?;
                         }
-                    }
-                    wtxn.commit()?;
-                }
-                else {
-                    println!("\nInvalid MatchId {} in Database!", EncodedMatchId(unexplored_match_id));
-        
-                    // remove invalid match
-                    let wtxn = match_db.write()?;
-                    wtxn.open_table(match_db[region])?
-                        .remove(unexplored_match_id)?;
-                    wtxn.commit()?;
-                    println!("\t-> Removed.\n");
+                        // pack into u64
+                        let packed = neuron::packed_comp::PackedComp::pack(teams[0], teams[1]);
                     
-                    continue;
+                        // swap teams to remain deterministically only based on team comps
+                        let mut result = if u_match.info.teams[0].win { 1 } else { -1 };
+                        if packed.ord == std::cmp::Ordering::Less {
+                            result *= -1;
+                        }
+    
+                        // insert into database
+                        let wtxn = comp_db.begin_write()?;
+                        {
+                            let packed = packed.packed;
+                            let mut db = wtxn.open_table(COMP_DB_TABLE)?;
+                            // get maybe existing
+                            let old = db.get(packed)?
+                                .map(|m| m.value());
+                            // update or insert new
+                            if let Some((balance, games)) = old {
+                                db.insert(packed, (balance+result, games+1))?;
+                            } 
+                            else {
+                                db.insert(packed, (result, 1))?;
+                            }
+                        }
+                        wtxn.commit()?;
+                    }
+                    else {
+                        println!("\nInvalid MatchId {} in Database!", unexplored_match_id);
+            
+                        // remove invalid match
+                        let wtxn = match_db.write()?;
+                        wtxn.open_table(match_db[region])?
+                            .remove(unexplored_match_id)?;
+                        wtxn.commit()?;
+                        println!("\t-> Removed.\n");
+                        
+                        continue;
+                    }
                 }
             }
             // if there are no matches left

@@ -60,3 +60,15 @@ impl Display for EncodedMatchId {
         write!(f, "{}", String::from(self))
     }
 }
+
+impl From<EncodedMatchId> for u64 {
+    fn from(value: EncodedMatchId) -> Self {
+        value.0
+    }
+}
+
+impl std::borrow::Borrow<u64> for EncodedMatchId {
+    fn borrow(&self) -> &u64 {
+        &self.0
+    }
+}
