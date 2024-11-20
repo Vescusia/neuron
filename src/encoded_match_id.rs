@@ -15,7 +15,7 @@ impl EncodedMatchId {
     }
     
     pub fn platform(self) -> riven::consts::PlatformRoute {
-        let platform = (self.0 & Self::PLATFORM_MASK) >> Self::PLATFORM_SHIFT;
+        let platform = self.0 >> Self::PLATFORM_SHIFT;
         riven::consts::PlatformRoute::try_from(platform as u8).expect("Invalid PlatformId encoded!")
     }
 }

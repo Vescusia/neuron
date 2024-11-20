@@ -9,16 +9,16 @@ name = "analyzer"
 
 
 [build-dependencies]
-riven = ">=2.50.0"
+riven = ">=2.57.0"
+regex = "~1.11"
 
 [dependencies]
 # Database
-redb = "~2.1"
+redb = "~2.2"
 # Riot API
-riven = ">=2.51.0"
+riven = ">=2.57"
 # Async
-tokio = { version = "~1.37", features = ["rt", "macros", "signal", "time"] }
-tokio-stream = { version = "0.1.15", features = ["sync"] }
+tokio = { version = "~1.41", features = ["rt", "macros", "signal", "time"] }
 # Error Handling
 anyhow = "~1.0"
 # CLI
