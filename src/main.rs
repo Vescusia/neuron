@@ -302,27 +302,30 @@ async fn region_scrape_thread<'a>(
                     ).await?;
                 //println!("\t-> Match history of {} matches", matches.len());
 
-                // set player match count to length of matches
-                let wtxn = player_db.write()?;
-                wtxn.open_table(player_db[region])?
-                    .insert(player_id.value(), (matches.len()+1) as u8)?;
-                wtxn.commit()?;
-
                 // add matches into database
+                let mut unexplored = 0;
                 let wtxn = match_db.write()?;
                 {
                     let mut db = wtxn.open_table(match_db[region])?;
                     for match_id in matches {
                         let id = EncodedMatchId::from(match_id).0;
                         if db.get(id)?.is_none() {
+                            unexplored += 1;
                             db.insert(id, false)?;
                         }
                     }
                 }
                 wtxn.commit()?;
+
+                // set player match count to length of matches
+                let wtxn = player_db.write()?;
+                wtxn.open_table(player_db[region])?
+                    .insert(player_id.value(), (unexplored+1) as u8)?;
+                wtxn.commit()?;
             }
             else {
                 println!("\nRan out of matches and players for {region}!");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
         }
     }

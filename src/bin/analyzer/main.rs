@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use clap::Parser;
 use redb::{ReadableTable, ReadableTableMetadata, TableHandle};
 use bytesize::ByteSize;
-use neuron::u8_to_champion;
+
+use neuron::{champ_to_u8, u8_to_champion};
 
 mod cli;
 
@@ -19,52 +21,133 @@ fn main() -> anyhow::Result<()> {
         print_db_stats(match_db)?;
     }
 
-    // check if synergy DB Path exists
-    if !args.syn_db.exists() {
-        eprintln!("Synergy Database {:?} does not exist!", args.syn_db);
-        eprintln!("Please specify a valid Path!");
-        std::process::exit(-1)
-    }
-    // check if matchup DB Path exists
-    if !args.matchup_db.exists() {
-        eprintln!("Matchup Database {:?} does not exist!", args.matchup_db);
-        eprintln!("Please specify a valid Path!");
-        std::process::exit(-1)
-    }
-    
+    // check if DB Paths exists and open database
+    let mut db = match &args.analyze {
+        cli::Command::Matchup { matchup_db } => {
+            if !matchup_db.exists() {
+                eprintln!("Matchup Database {:?} does not exist!", matchup_db);
+                eprintln!("Please specify a valid Path!");
+                std::process::exit(-1)
+            } else {
+                redb::Database::open(matchup_db)?
+            }
+        },
+        cli::Command::Synergy { syn_db } => {
+            if !syn_db.exists() {
+                eprintln!("Synergy Database {:?} does not exist!", syn_db);
+                eprintln!("Please specify a valid Path!");
+                std::process::exit(-1)
+            } else {
+                redb::Database::open(syn_db)?
+            }
+        }
+    };
 
-    // analyze syn DB
-    let mut self_synergies = std::collections::HashMap::<riven::consts::Champion, u32>::new();
-    let db = redb::Database::open(&args.syn_db)?;
+    // repair database
+    print!("Checking integrity...");
+    if !db.check_integrity()? {
+        println!("\rDatabase repaired.                ");
+    } else {
+        println!("\rDatabase integrate.               ");
+    }
+
+    // collect tables
     let rtxn = db.begin_read()?;
+    let mut tables: Vec<_> = rtxn.list_tables()?.collect();
+    tables.sort_by(|t0, t1| {
+        match version_compare::compare(t1.name(), t0.name()).expect("Invalid Table Names!") {
+            version_compare::Cmp::Gt => std::cmp::Ordering::Greater,
+            version_compare::Cmp::Lt => std::cmp::Ordering::Less,
+            version_compare::Cmp::Eq => std::cmp::Ordering::Equal,
+            _ => { panic!("Versions have to be either gt, lt or eq!"); }
+        }
+    });
+
+    // latest or all patches?
+    if matches!(args.patch, cli::Patch::latest) {
+        let latest = tables.first().expect("Database is empty or corrupted!").name();
+        let latest = version_compare::Version::from(latest).expect("Invalid Table Name!");
+        println!("{latest:?}");
+
+        // find the first i patches which are still on the same latest "major" patch
+        let mut i = 0;
+        for table in tables.iter() {
+            let version = version_compare::Version::from(table.name()).expect("Invalid Table Name!");
+            if latest.part(0) == version.part(0) && version.part(1) == latest.part(1) {
+                i += 1;
+            } else {
+                break
+            }
+        }
+        tables.truncate(i);
+    }
+    println!("Using versions {:?}.", tables.iter().map(|t| t.name()).collect::<Vec<_>>());
+
+    // collect data
     let start = std::time::Instant::now();
-    let mut highest_total = (0., (0., 0, None));
-    for table in rtxn.list_tables()? {
-        // specify table
-        let name = table.name();
-        let table_def = redb::TableDefinition::<neuron::SynDbK, neuron::SynDbV>::new(name);
+    let mut pairing_map = HashMap::new();
+    for version in tables {
         // open table
-        let table = rtxn.open_table(table_def)?;
+        let rtxn = db.begin_read()?;
+        let db = rtxn.open_table(redb::TableDefinition::<neuron::SynDbK, neuron::SynDbV>::new(version.name()))?;
 
-        // sum up all self-synergies
-        for (key, value) in table.iter()?.filter_map(|e| e.ok()) {
-            let synergy = key.value();
-            let (wins, total, _damage_diff) = value.value();
+        // iterate over values
+        for pairing in db.iter()? {
+            // unpack values
+            let (pairing, (wins, total, aux)) = {
+                let (pairing, value) = pairing?;
+                (pairing.value(), value.value())
+            };
 
-            let winrate = wins as f32 / total as f32;
-            if winrate * (total as f32).sqrt() > highest_total.0 {
-                highest_total.0 = winrate * (total as f32).sqrt();
-                highest_total.1 = (winrate, total, Some(synergy.map(u8_to_champion).map(riven::consts::Champion::identifier)));
+            // make sure the pairing includes the specified champions
+            if let Some(champ1) = args.champion1 {
+                let champ1 = champ_to_u8(champ1);
+                if champ1 != pairing[0] && champ1 != pairing[1] {
+                    continue;
+                }
+            }
+            let champ0 = champ_to_u8(args.champion0);
+            if champ0 != pairing[0] && champ0 != pairing[1] {
+                continue;
             }
 
-            if synergy[0] == synergy[1] {
-                let old_total = self_synergies.get(&u8_to_champion(synergy[0]));
-                self_synergies.insert(u8_to_champion(synergy[0]), old_total.unwrap_or(&0) + total as u32);
+            // insert result
+            let (wins, total, aux) = (wins as u32, total as u32, aux as i64);
+            let old = pairing_map.get(&pairing);
+            if let Some((o_wins, o_total, o_aux)) = old {
+                pairing_map.insert(pairing, (o_wins + wins, o_total + total, o_aux + aux));
+            } else {
+                pairing_map.insert(pairing, (wins, total, aux));
             }
         }
     }
-    println!("Total self-synergies: {} in {:.2}s", self_synergies.values().sum::<u32>(), start.elapsed().as_secs_f64());
-    println!("Highest total: {:?}", highest_total);
+
+    // calculate total games
+    let total_specific_games = pairing_map.values().map(|(_, t, _)| t).sum::<u32>() / 5;
+
+    // collect and order result
+    let mut pairings = pairing_map.into_iter().collect::<Vec<_>>();
+    for (pairing, (wins, total, aux)) in pairings.iter_mut() {
+        if pairing[0] != champ_to_u8(args.champion0) {
+            pairing.swap(0, 1);
+            if matches!(&args.analyze, cli::Command::Matchup { .. }) {
+                *wins = *total - *wins;
+                *aux *= -1;
+            }
+        }
+    }
+    pairings.sort_by(|(_, v0), (_, v1)| {
+        ((v0.0 << 8) / v0.1).cmp(&((v1.0 << 8) / v1.1))
+    });
+    println!("Collected all pairings in {:.2}s\n\t{total_specific_games} games", start.elapsed().as_secs_f64());
+
+    // output result
+    println!("{:12} | {:5} | {:4} | {:5}", "Champ-Pair", "Win ‰", "Amnt", "AUX");
+    for (pairing, (wins, total, aux)) in pairings {
+        let pairing = pairing.map(u8_to_champion).map(riven::consts::Champion::identifier).map(Option::unwrap);
+        print!("{:12} | ", pairing[1]);
+        println!("{:4}‰ | {:4} | {:5}", wins * 1000 / total, total, aux / (total as i64));
+    }
 
     Ok(())
 }

@@ -25,8 +25,8 @@ impl<'a> Iterator for Matchups<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.y >= self.participants.len() {
-            self.y = 0;
             self.x += 1;
+            self.y = self.x;
         }
         let y_old = self.y; 
         self.y += 1;
@@ -56,8 +56,8 @@ impl<'a> Iterator for Synergies<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.y >= self.participants.len() {
-            self.y = 0;
             self.x += 1;
+            self.y = self.x;
         }
         let y_old = self.y; 
         self.y += 1;
