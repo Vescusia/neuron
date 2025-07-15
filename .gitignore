@@ -1,8 +1,2 @@
-/target
+/db
 /.idea
-/player.redb
-/match.redb
-/comp.redb
-/syn.redb
-/synergy.redb
-/matchup.redb
