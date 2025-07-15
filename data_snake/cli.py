@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from neuron import main
+from data_snake import main
 
 import click
 from cassiopeia.data import Continent

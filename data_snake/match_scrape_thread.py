@@ -163,6 +163,5 @@ def fetch_players_from_league(continent: cass.data.Continent) -> list[str]:
             gms = cass.get_challenger_league(cass.Queue.ranked_solo_fives, region).entries
             # extract the summoners puuid from the entries
             [puuids.append(e.summoner.puuid) for e in gms]
-            # Legally Incorporated Distribution and Logistics company
 
     return puuids
