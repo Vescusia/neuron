@@ -1,167 +1,123 @@
 from pathlib import Path
-import time
+from time import time
 from queue import Queue
-import lzma
 import os
 
-import cassiopeia as cass
+import riotwatcher as rw
 
-from continent_db import ContinentDB
-from match_id_coder import MatchIdCoder
-from encoded_puuid import EncodedPUUID
-from syn_db import CodedSynergy
-from syn_db import SynergyDB
+import lib
+from continent_db import MatchDB, SummonerDB
+from compressed_json_ball import CompressedJSONBall
+from reqtimecalc import ReqTimeCalc
 
 
-def scrape_continent(stop_q: Queue[None], state_q: Queue[int], match_db: ContinentDB, sum_db: ContinentDB, syn_db: SynergyDB, matchup_db: SynergyDB, matches_path: Path) -> None:
-    match_coder = MatchIdCoder(match_db)
+def scrape_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, lolwatcher: rw.LolWatcher) -> None:
     inc_explored_matches = 0
     total_explored_matches = 0
 
-    # create matches_dir for json files
-    matches_path = matches_path.joinpath(str(match_db.continent.value)).joinpath(f"{int(time.time())}.xz")
+    # create matches_dir for JSON files
+    matches_path = matches_path.joinpath(str(match_db.continent)).joinpath(f"{int(time())}.xz")
     if not os.path.exists(matches_path.parent):
         os.makedirs(matches_path.parent)
-    # open file
-    with lzma.open(matches_path, "w", preset=6) as matches_fp:
+    # open lzma compressed JSON ball
+    matches_ball = CompressedJSONBall(matches_path, split_every=1_000)
+
+    while True:
+        # break if we get the signal to stop
+        if not stop_q.empty():
+            stop_q.get()
+            total_explored_matches += inc_explored_matches
+            break
+
+        # search for unexplored match
         while True:
-            # break if we get the signal to stop
-            if not stop_q.empty():
-                stop_q.get()
-                total_explored_matches += inc_explored_matches
+            unexplored_match = match_db.unexplored_match()
+            if unexplored_match is not None:
+                new_match_id, rank = unexplored_match
                 break
-
-            # search for unexplored match
-            with match_db.begin() as txn:
-                for match_id, visited in txn.cursor():
-                    if not visited:
-                        new_match_id = match_id
-                        break
-                else:
-                    # request match history from an unexplored player
-                    explore_player(match_db, sum_db, match_coder, stop_q)
-                    # update explored matches
-                    total_explored_matches += inc_explored_matches
-                    state_q.put(inc_explored_matches)
-                    inc_explored_matches = 0
-                    continue
-
-            # request Match from RiotAPI
-            id_int, id_region = match_coder.decode(new_match_id)
-            new_match: cass.Match = cass.get_match(id_int, id_region)
-
-            # explore match
-            # explore synergies
-            with syn_db.begin(new_match.patch, write=True) as stxn:
-                with matchup_db.begin(new_match.patch, write=True) as mtxn:
-                    for i in range(0, len(new_match.participants)):
-                        for j in range(i, len(new_match.participants)):
-                            p0, p1 = new_match.participants[i], new_match.participants[j]
-                            win = 1 if p0.team.win else 0
-
-                            if p0.team != p1.team:
-                                comp = CodedSynergy(p0.champion, p1.champion, win, 1, syn_db)
-                                txn = stxn
-                            else:
-                                comp = CodedSynergy(p0.champion, p1.champion, win, 1, matchup_db)
-                                txn = mtxn
-
-                            # insert into database
-                            key, _ = comp.to_bytes()
-                            old = txn.get(key)
-                            if old:
-                                old = CodedSynergy.from_bytes(key, old, comp.db)
-                                comp.total += old.total
-                                comp.wins += old.wins
-                            txn.put(*comp.to_bytes())
-
-            # save match as json
-            _ = new_match.participants, new_match.teams, new_match.is_remake  # we have to actually load the data (see cassiopeia ghost loading)
-            # to json
-            match_json = new_match.to_json()
-            match_json = match_json.encode()
-            # save to file
-            matches_fp.write(len(match_json).to_bytes(4, "big", signed=False))
-            matches_fp.write(match_json)
-
-            # add participants to SummonerDB
-            with sum_db.begin(write=True) as txn:
-                for participant in new_match.participants:
-                    puuid = bytes(EncodedPUUID(participant.summoner.puuid))
-                    matches = int.from_bytes(txn.get(puuid) or bytes(0), "big")
-                    txn.put(
-                        puuid,
-                        max(0, matches).to_bytes(1, "big")
-                    )
-
-            # mark Match as explored
-            with match_db.begin(write=True) as txn:
-                txn.put(new_match_id, bytes(True))
-                inc_explored_matches += 1
-
-    # rename file to amount of matches scraped
-    matches_path_new = matches_path.parent.joinpath(matches_path.name.removesuffix(".xz") + f"_{total_explored_matches}.xz")
-    matches_path.rename(matches_path_new)
-
-
-def explore_player(match_db: ContinentDB, sum_db: ContinentDB, match_coder: MatchIdCoder, stop_q: Queue[None]) -> None:
-    # search for player with no explored matches
-    try:
-        with sum_db.begin(write=True) as txn:
-            cur = txn.cursor()
-            for puuid, explored_matches in cur:
-                if explored_matches == (0).to_bytes(1, "big"):
-                    puuid = EncodedPUUID(puuid)
-                    break
             else:
-                # break out of with statement to collect new players from the League API
-                print(f"\n\n{sum_db} Ran out of players, getting new ones!\n")
-                raise LookupError
+                # request match history from an unexplored player
+                explore_player(match_db, sum_db, stop_q, lolwatcher)
+                # update explored matches
+                total_explored_matches += inc_explored_matches
+                state_q.put(inc_explored_matches)
+                inc_explored_matches = 0
 
-    except LookupError:
+        # request Match from RiotAPI
+        new_match = lolwatcher.match.by_id(match_db.continent, new_match_id)
+        inc_explored_matches += 1
+
+        # save match as JSON
+        # save to file
+        matches_ball.append(new_match)
+
+        # add participants to SummonerDB
+        puuids = [participant['puuid'] for participant in new_match['info']['participants']]
+        request_times = [ReqTimeCalc.initial() for _ in puuids]
+        sum_db.put_multi([(puuid, req, wait_time) for puuid, (req, wait_time) in zip(puuids, request_times)])
+
+        # mark Match as explored
+        match_db.set_explored(new_match_id)
+
+    # close the matches ball
+    matches_ball.close()
+
+
+def explore_player(match_db: MatchDB, sum_db: SummonerDB, stop_q: Queue[None], lolwatcher: rw.LolWatcher) -> None:
+    # search for a player whose next request time is in the past (can be explored again)
+    unexplored_sum = sum_db.expired_summoner()
+
+    # check if we found an unexplored summoner
+    if unexplored_sum is None:
+        print(f"\n\n{sum_db} Ran out of players, getting new ones!\n")
+
         # get new players from challenger leagues
-        puuids = fetch_players_from_league(
-            sum_db.continent)  # this will absolutely demolish our rate limit and take ages
+        puuids = fetch_players_from_league(sum_db.continent, lolwatcher)  # this will absolutely demolish our rate limit and take ages
 
-        # insert into database
-        encoded_puuids = [(bytes(EncodedPUUID(puuid)), (0).to_bytes(1)) for puuid in puuids]
-        with sum_db.begin(write=True) as txn:
-            cur = txn.cursor()
-            _, added = cur.putmulti(encoded_puuids, overwrite=False)
+        # calculate initial request times
+        request_times = [ReqTimeCalc.initial() for _ in puuids]
+        entries = [(puuid, request_time, wait_time) for puuid, (request_time, wait_time) in zip(puuids, request_times)]
 
-        # check if we actually inserted unexplored PUUIDs
-        if added == 0:
-            # fuck
-            stop_q.put(None)
+        # insert them into the database
+        _, new = sum_db.put_multi(entries)
+
+        # check if we already fetched all challengers :(
+        if new == 0:
             raise Exception(f"\n\n\n\n[ERROR] {sum_db} Completely RAN OUT OF SUMMONERS\n\n")
         else:
-            print("\nAdded", added, "unexplored players!")
-            return explore_player(match_db, sum_db, match_coder, stop_q)
+            print("\nAdded", new, "unexplored players!")
+            return explore_player(match_db, sum_db, stop_q, lolwatcher)
 
-    # get their match history
-    matches: list[cass.Match] = cass.get_match_history(sum_db.continent, puuid.decode(), queue=cass.Queue.ranked_solo_fives, count=100)
+    else:
+        unexplored_sum_id, _, wait_time = unexplored_sum
 
-    # insert into match database
-    with match_db.begin(write=True) as txn:
-        for match in matches:
-            match_id = match_coder.encode(match.id, match.region)
-            txn.put(match_id, bytes(False), overwrite=False)
+    # get the match history of the summoner
+    matches = lolwatcher.match.matchlist_by_puuid(match_db.continent, unexplored_sum_id, count=100, type="ranked", queue=420)
+
+    # get the rank of the summoner
+    league = lolwatcher.league.by_puuid(matches[0].split('_')[0], unexplored_sum_id)[0]
+
+    # insert into the match database
+    total, new_inserted = match_db.put_multi([(m_id, False, league['tier'], league['rank']) for m_id in matches])
 
     # update summoner
-    with sum_db.begin(write=True) as txn:
-        txn.put(bytes(puuid), (len(matches) + 1).to_bytes(1, "big"), overwrite=True)
+    next_time, wait_time = ReqTimeCalc(wait_time).step(new_inserted / total)
+    sum_db.put(unexplored_sum_id, next_time, wait_time)
+
     return None
 
 
 # collect the players from the grandmaster leagues of all regions in our continent
-def fetch_players_from_league(continent: cass.data.Continent) -> list[str]:
+def fetch_players_from_league(continent: str, lolwatcher: rw.LolWatcher) -> list[str]:
     # find regions in our continent
     puuids = []
-    for region in cass.Region:
-        if region.continent == continent:
-            print("\nGetting Players of Challenger League for", region.name)
-            gms = cass.get_challenger_league(cass.Queue.ranked_solo_fives, region).entries
-            # extract the summoners puuid from the entries
-            [puuids.append(e.summoner.puuid) for e in gms]
+    for region in lib.CONTINENTS_REGIONS_MAP[continent]:
+        print("Getting Players of Challenger League for", region)
+
+        # request challenger league
+        chals = lolwatcher.league.challenger_by_queue(region, "RANKED_SOLO_5x5")['entries']
+
+        # extract the summoners puuid from the entries
+        [puuids.append(chal['puuid']) for chal in chals]
 
     return puuids

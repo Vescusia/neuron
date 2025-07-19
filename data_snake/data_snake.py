@@ -6,42 +6,34 @@ from queue import Queue
 from pathlib import Path
 import os
 
-import cassiopeia as cass
 import lmdb
+import riotwatcher as rw
 
-from continent_db import ContinentDB
+from continent_db import ContinentDB, MatchDB, SummonerDB
 import match_scrape_thread
-from syn_db import SynergyDB, CodedSynergy
 
 
-def main(api_key: str, continents: list[cass.data.Continent], match_db_path: str, sum_db_path: str, syn_db_path: str, matchup_db_path: str, matches_path: Path) -> None:
+def main(api_key: str, continents: list[str], match_db_path: str, sum_db_path: str, matches_path: Path, lolwatcher: rw.LolWatcher) -> None:
     print(api_key, continents, match_db_path, sum_db_path)
-    cass.print_calls(False)
 
     # open database environments
     os.makedirs(match_db_path, exist_ok=True)
     match_env = lmdb.open(match_db_path, max_dbs=len(continents))
     print("MatchDB stats:", match_env.info())
-    os.makedirs(syn_db_path, exist_ok=True)
+    os.makedirs(sum_db_path, exist_ok=True)
     sum_env = lmdb.open(sum_db_path, max_dbs=len(continents))
     print("SummonerDB stats:", sum_env.info())
-    os.makedirs(syn_db_path, exist_ok=True)
-    syn_db = SynergyDB(syn_db_path)
-    print("SynergyDB stats:", syn_db.env.info())
-    os.makedirs(match_db_path, exist_ok=True)
-    matchup_db = SynergyDB(matchup_db_path)
-    print("MatchupDB stats:", matchup_db.env.info())
 
     # create Continent specific Databases
-    cont_dbs: list[tuple[ContinentDB, ContinentDB]] = []  # (MatchDB, SumDB)
+    cont_dbs: list[tuple[MatchDB, SummonerDB]] = []  # (MatchDB, SumDB)
     for continent in continents:
-        cont_dbs.append((ContinentDB(match_env, continent), ContinentDB(sum_env, continent)))
+        cont_dbs.append((MatchDB(ContinentDB(match_env, continent)), SummonerDB(ContinentDB(sum_env, continent))))
 
     # start thread for each continent
     stop_q, state_q = Queue(), Queue()
     futures = []
     for dbs in cont_dbs:
-        t = Thread(target=match_scrape_thread.scrape_continent, args=(stop_q, state_q, *dbs, syn_db, matchup_db, matches_path))
+        t = Thread(target=match_scrape_thread.scrape_continent, args=(stop_q, state_q, *dbs, matches_path, lolwatcher))
         futures.append(t)
         t.start()
 
