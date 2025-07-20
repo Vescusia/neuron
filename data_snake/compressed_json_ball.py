@@ -65,8 +65,8 @@ class CompressedJSONBall:
         # create the new path
         split_path_name = self._original_path.name.split('.')
         new_file_name = f"{split_path_name[0]}_{num}.{split_path_name[1]}"
-        new_path = self.path.parent.joinpath(new_file_name)
+        new_path = self.path.parent / new_file_name
 
         # rename the file
         rename(self.path, new_path)
-        self.path = self.path.parent.joinpath(new_file_name)
+        self.path = new_path

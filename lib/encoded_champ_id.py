@@ -5,197 +5,202 @@ This encoding promises to be consistent across all patches; i.e., new champions 
 and old champions will retain theirs.
 """
 
-import numpy as np
+from numpy import uint8
 
 from lib import CHAMPIONS
 
 
 # map champ.id to u8
 # this is done by hand to keep the promise of consistency at all times
-_id_to_int_map: dict[str, int] = {
-    'Aatrox': 0,
-    'Ahri': 1,
-    'Akali': 2,
-    'Akshan': 3,
-    'Alistar': 4,
-    'Ambessa': 5,
-    'Amumu': 6,
-    'Anivia': 7,
-    'Annie': 8,
-    'Aphelios': 9,
-    'Ashe': 10,
-    'AurelionSol': 11,
-    'Aurora': 12,
-    'Azir': 13,
-    'Bard': 14,
-    'Belveth': 15,
-    'Blitzcrank': 16,
-    'Brand': 17,
-    'Braum': 18,
-    'Briar': 19,
-    'Caitlyn': 20,
-    'Camille': 21,
-    'Cassiopeia': 22,
-    'Chogath': 23,
-    'Corki': 24,
-    'Darius': 25,
-    'Diana': 26,
-    'Draven': 27,
-    'DrMundo': 28,
-    'Ekko': 29,
-    'Elise': 30,
-    'Evelynn': 31,
-    'Ezreal': 32,
-    'Fiddlesticks': 33,
-    'Fiora': 34,
-    'Fizz': 35,
-    'Galio': 36,
-    'Gangplank': 37,
-    'Garen': 38,
-    'Gnar': 39,
-    'Gragas': 40,
-    'Graves': 41,
-    'Gwen': 42,
-    'Hecarim': 43,
-    'Heimerdinger': 44,
-    'Hwei': 45,
-    'Illaoi': 46,
-    'Irelia': 47,
-    'Ivern': 48,
-    'Janna': 49,
-    'JarvanIV': 50,
-    'Jax': 51,
-    'Jayce': 52,
-    'Jhin': 53,
-    'Jinx': 54,
-    'Kaisa': 55,
-    'Kalista': 56,
-    'Karma': 57,
-    'Karthus': 58,
-    'Kassadin': 59,
-    'Katarina': 60,
-    'Kayle': 61,
-    'Kayn': 62,
-    'Kennen': 63,
-    'Khazix': 64,
-    'Kindred': 65,
-    'Kled': 66,
-    'KogMaw': 67,
-    'KSante': 68,
-    'Leblanc': 69,
-    'LeeSin': 70,
-    'Leona': 71,
-    'Lillia': 72,
-    'Lissandra': 73,
-    'Lucian': 74,
-    'Lulu': 75,
-    'Lux': 76,
-    'Malphite': 77,
-    'Malzahar': 78,
-    'Maokai': 79,
-    'MasterYi': 80,
-    'Mel': 81,
-    'Milio': 82,
-    'MissFortune': 83,
-    'MonkeyKing': 84,
-    'Mordekaiser': 85,
-    'Morgana': 86,
-    'Naafiri': 87,
-    'Nami': 88,
-    'Nasus': 89,
-    'Nautilus': 90,
-    'Neeko': 91,
-    'Nidalee': 92,
-    'Nilah': 93,
-    'Nocturne': 94,
-    'Nunu': 95,
-    'Olaf': 96,
-    'Orianna': 97,
-    'Ornn': 98,
-    'Pantheon': 99,
-    'Poppy': 100,
-    'Pyke': 101,
-    'Qiyana': 102,
-    'Quinn': 103,
-    'Rakan': 104,
-    'Rammus': 105,
-    'RekSai': 106,
-    'Rell': 107,
-    'Renata': 108,
-    'Renekton': 109,
-    'Rengar': 110,
-    'Riven': 111,
-    'Rumble': 112,
-    'Ryze': 113,
-    'Samira': 114,
-    'Sejuani': 115,
-    'Senna': 116,
-    'Seraphine': 117,
-    'Sett': 118,
-    'Shaco': 119,
-    'Shen': 120,
-    'Shyvana': 121,
-    'Singed': 122,
-    'Sion': 123,
-    'Sivir': 124,
-    'Skarner': 125,
-    'Smolder': 126,
-    'Sona': 127,
-    'Soraka': 128,
-    'Swain': 129,
-    'Sylas': 130,
-    'Syndra': 131,
-    'TahmKench': 132,
-    'Taliyah': 133,
-    'Talon': 134,
-    'Taric': 135,
-    'Teemo': 136,
-    'Thresh': 137,
-    'Tristana': 138,
-    'Trundle': 139,
-    'Tryndamere': 140,
-    'TwistedFate': 141,
-    'Twitch': 142,
-    'Udyr': 143,
-    'Urgot': 144,
-    'Varus': 145,
-    'Vayne': 146,
-    'Veigar': 147,
-    'Velkoz': 148,
-    'Vex': 149,
-    'Vi': 150,
-    'Viego': 151,
-    'Viktor': 152,
-    'Vladimir': 153,
-    'Volibear': 154,
-    'Warwick': 155,
-    'Xayah': 156,
-    'Xerath': 157,
-    'XinZhao': 158,
-    'Yasuo': 159,
-    'Yone': 160,
-    'Yorick': 161,
-    'Yunara': 162,
-    'Yuumi': 163,
-    'Zac': 164,
-    'Zed': 165,
-    'Zeri': 166,
-    'Ziggs': 167,
-    'Zilean': 168,
-    'Zoe': 169,
-    'Zyra': 170,
+# print('\n'.join([f"    {champ['key']}: {i+1},  # {champ['id']}" for i, (_, champ) in enumerate(CHAMPIONS.items())]))
+_id_to_int_map: dict[int, int] = {
+    -1: 0,  # No Pick/Ban
+    266: 1,  # Aatrox
+    103: 2,  # Ahri
+    84: 3,  # Akali
+    166: 4,  # Akshan
+    12: 5,  # Alistar
+    799: 6,  # Ambessa
+    32: 7,  # Amumu
+    34: 8,  # Anivia
+    1: 9,  # Annie
+    523: 10,  # Aphelios
+    22: 11,  # Ashe
+    136: 12,  # AurelionSol
+    893: 13,  # Aurora
+    268: 14,  # Azir
+    432: 15,  # Bard
+    200: 16,  # Belveth
+    53: 17,  # Blitzcrank
+    63: 18,  # Brand
+    201: 19,  # Braum
+    233: 20,  # Briar
+    51: 21,  # Caitlyn
+    164: 22,  # Camille
+    69: 23,  # Cassiopeia
+    31: 24,  # Chogath
+    42: 25,  # Corki
+    122: 26,  # Darius
+    131: 27,  # Diana
+    119: 28,  # Draven
+    36: 29,  # DrMundo
+    245: 30,  # Ekko
+    60: 31,  # Elise
+    28: 32,  # Evelynn
+    81: 33,  # Ezreal
+    9: 34,  # Fiddlesticks
+    114: 35,  # Fiora
+    105: 36,  # Fizz
+    3: 37,  # Galio
+    41: 38,  # Gangplank
+    86: 39,  # Garen
+    150: 40,  # Gnar
+    79: 41,  # Gragas
+    104: 42,  # Graves
+    887: 43,  # Gwen
+    120: 44,  # Hecarim
+    74: 45,  # Heimerdinger
+    910: 46,  # Hwei
+    420: 47,  # Illaoi
+    39: 48,  # Irelia
+    427: 49,  # Ivern
+    40: 50,  # Janna
+    59: 51,  # JarvanIV
+    24: 52,  # Jax
+    126: 53,  # Jayce
+    202: 54,  # Jhin
+    222: 55,  # Jinx
+    145: 56,  # Kaisa
+    429: 57,  # Kalista
+    43: 58,  # Karma
+    30: 59,  # Karthus
+    38: 60,  # Kassadin
+    55: 61,  # Katarina
+    10: 62,  # Kayle
+    141: 63,  # Kayn
+    85: 64,  # Kennen
+    121: 65,  # Khazix
+    203: 66,  # Kindred
+    240: 67,  # Kled
+    96: 68,  # KogMaw
+    897: 69,  # KSante
+    7: 70,  # Leblanc
+    64: 71,  # LeeSin
+    89: 72,  # Leona
+    876: 73,  # Lillia
+    127: 74,  # Lissandra
+    236: 75,  # Lucian
+    117: 76,  # Lulu
+    99: 77,  # Lux
+    54: 78,  # Malphite
+    90: 79,  # Malzahar
+    57: 80,  # Maokai
+    11: 81,  # MasterYi
+    800: 82,  # Mel
+    902: 83,  # Milio
+    21: 84,  # MissFortune
+    62: 85,  # MonkeyKing
+    82: 86,  # Mordekaiser
+    25: 87,  # Morgana
+    950: 88,  # Naafiri
+    267: 89,  # Nami
+    75: 90,  # Nasus
+    111: 91,  # Nautilus
+    518: 92,  # Neeko
+    76: 93,  # Nidalee
+    895: 94,  # Nilah
+    56: 95,  # Nocturne
+    20: 96,  # Nunu
+    2: 97,  # Olaf
+    61: 98,  # Orianna
+    516: 99,  # Ornn
+    80: 100,  # Pantheon
+    78: 101,  # Poppy
+    555: 102,  # Pyke
+    246: 103,  # Qiyana
+    133: 104,  # Quinn
+    497: 105,  # Rakan
+    33: 106,  # Rammus
+    421: 107,  # RekSai
+    526: 108,  # Rell
+    888: 109,  # Renata
+    58: 110,  # Renekton
+    107: 111,  # Rengar
+    92: 112,  # Riven
+    68: 113,  # Rumble
+    13: 114,  # Ryze
+    360: 115,  # Samira
+    113: 116,  # Sejuani
+    235: 117,  # Senna
+    147: 118,  # Seraphine
+    875: 119,  # Sett
+    35: 120,  # Shaco
+    98: 121,  # Shen
+    102: 122,  # Shyvana
+    27: 123,  # Singed
+    14: 124,  # Sion
+    15: 125,  # Sivir
+    72: 126,  # Skarner
+    901: 127,  # Smolder
+    37: 128,  # Sona
+    16: 129,  # Soraka
+    50: 130,  # Swain
+    517: 131,  # Sylas
+    134: 132,  # Syndra
+    223: 133,  # TahmKench
+    163: 134,  # Taliyah
+    91: 135,  # Talon
+    44: 136,  # Taric
+    17: 137,  # Teemo
+    412: 138,  # Thresh
+    18: 139,  # Tristana
+    48: 140,  # Trundle
+    23: 141,  # Tryndamere
+    4: 142,  # TwistedFate
+    29: 143,  # Twitch
+    77: 144,  # Udyr
+    6: 145,  # Urgot
+    110: 146,  # Varus
+    67: 147,  # Vayne
+    45: 148,  # Veigar
+    161: 149,  # Velkoz
+    711: 150,  # Vex
+    254: 151,  # Vi
+    234: 152,  # Viego
+    112: 153,  # Viktor
+    8: 154,  # Vladimir
+    106: 155,  # Volibear
+    19: 156,  # Warwick
+    498: 157,  # Xayah
+    101: 158,  # Xerath
+    5: 159,  # XinZhao
+    157: 160,  # Yasuo
+    777: 161,  # Yone
+    83: 162,  # Yorick
+    804: 163,  # Yunara
+    350: 164,  # Yuumi
+    154: 165,  # Zac
+    238: 166,  # Zed
+    221: 167,  # Zeri
+    115: 168,  # Ziggs
+    26: 169,  # Zilean
+    142: 170,  # Zoe
+    143: 171,  # Zyra
 }
 
+# change the datatype to numpy
+_id_to_int_map: dict[int, uint8] = {champ: uint8(i) for champ, i in _id_to_int_map.items()}
+
 # reverse the map
-_int_to_id_map: dict[int, str] = {v: k for k, v in _id_to_int_map.items()}
+_int_to_id_map: dict[uint8, int] = {v: k for k, v in _id_to_int_map.items()}
 
 
-def to_int(champ_id: str) -> np.uint8:
-    return np.uint8(_id_to_int_map[champ_id])
+def to_int(champ_id: int) -> uint8:
+    return _id_to_int_map[champ_id]
 
 
-def from_int(id_int: int) -> str:
+def from_int(id_int: uint8) -> int:
     """
-    :return: id of the champion
+    :return: id/key of the champion
     """
     return CHAMPIONS[_int_to_id_map[id_int]]

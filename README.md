@@ -34,10 +34,10 @@ It is, however, not optimized for any potential faster rate limit (than 100 requ
 **Every** match JSON will be saved within the 'matches' path (default: './matches') as LZMA compressed balls.
 Each instance of data snake will create one match ball per continent, 
 with the name format being `<timestamp>_<number_of_contained_matches>.xz`. 
-Each ball may only contain up to 1,000 matches and will split itself if it reaches that amount.
+Each ball may only contain up to 36,000 matches (roughly half a day) and will split itself if it reaches that amount.
 Decompress these files to access the raw match JSON.
 
-Additionally, certain match features (Average Rank, Patch, Champions, Bans, Win/Loss) (This selection may change at any time!)
+Additionally, certain match features (Patch, Rank, Picked Champions, Bans, Win/Loss) (This selection may change at any time!)
 will be saved in a PyArrow dataset for quick, easy access.
 
 ## Dependencies
@@ -45,3 +45,5 @@ Currently, Neuron depends on
 * [RiotWatcher](https://github.com/pseudonym117/Riot-Watcher), a thin python wrapping for the Riot-API
 * [lmdb](https://pypi.org/project/lmdb/), LMDB bindings for python
 * [click](https://click.palletsprojects.com/en/stable/), a quick but solid CLI library
+* numpy
+* 

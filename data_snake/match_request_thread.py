@@ -1,45 +1,44 @@
 from pathlib import Path
 from time import time
 from queue import Queue
-import os
+from pprint import pprint
 
 import riotwatcher as rw
 
 import lib
 from continent_db import MatchDB, SummonerDB
 from compressed_json_ball import CompressedJSONBall
+from league_arrow import ContinentDataset
 from reqtimecalc import ReqTimeCalc
 
 
-def scrape_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, lolwatcher: rw.LolWatcher) -> None:
+def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, dataset: ContinentDataset, lolwatcher: rw.LolWatcher) -> None:
+    # variable for incremental explored matches,
+    # with incremental meaning between updates to state_q
     inc_explored_matches = 0
-    total_explored_matches = 0
 
     # create matches_dir for JSON files
-    matches_path = matches_path.joinpath(str(match_db.continent)).joinpath(f"{int(time())}.xz")
-    if not os.path.exists(matches_path.parent):
-        os.makedirs(matches_path.parent)
+    matches_path = matches_path / match_db.continent / f"{int(time())}.xz"
+    matches_path.parent.mkdir(parents=True, exist_ok=True)
     # open lzma compressed JSON ball
-    matches_ball = CompressedJSONBall(matches_path, split_every=1_000)
+    matches_ball = CompressedJSONBall(matches_path, split_every=36_000)
 
     while True:
         # break if we get the signal to stop
         if not stop_q.empty():
             stop_q.get()
-            total_explored_matches += inc_explored_matches
             break
 
         # search for unexplored match
         while True:
             unexplored_match = match_db.unexplored_match()
             if unexplored_match is not None:
-                new_match_id, rank = unexplored_match
+                new_match_id, ranked_score = unexplored_match
                 break
             else:
                 # request match history from an unexplored player
                 explore_player(match_db, sum_db, stop_q, lolwatcher)
                 # update explored matches
-                total_explored_matches += inc_explored_matches
                 state_q.put(inc_explored_matches)
                 inc_explored_matches = 0
 
@@ -47,8 +46,10 @@ def scrape_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB
         new_match = lolwatcher.match.by_id(match_db.continent, new_match_id)
         inc_explored_matches += 1
 
-        # save match as JSON
-        # save to file
+        # add match to dataset
+        dataset.append(new_match, ranked_score)
+
+        # save match JSON
         matches_ball.append(new_match)
 
         # add participants to SummonerDB

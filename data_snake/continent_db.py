@@ -8,6 +8,10 @@ from encoded_puuid import EncodedPUUID
 
 
 class ContinentDB:
+    """
+    A continent-specific LMDB Database within a lmdb.Environment.
+    """
+
     def __init__(self, env: Environment, continent: str, **kwargs):
         self.continent = continent
         self.env = env
@@ -24,6 +28,10 @@ class ContinentDB:
 
 
 class SummonerDB:
+    """
+    ContinentDB interface specifically for summoners.
+    """
+
     def __init__(self, continent_db: ContinentDB):
         self.cdb = continent_db
         self.continent = continent_db.continent
@@ -109,6 +117,10 @@ class SummonerDB:
 
 
 class MatchDB:
+    """
+    ContinentDB interface specifically for matches.
+    """
+
     def __init__(self, continent_db: ContinentDB):
         self.cdb = continent_db
         self.continent = continent_db.continent
