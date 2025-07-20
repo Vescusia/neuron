@@ -9,13 +9,13 @@ import os
 import lmdb
 import riotwatcher as rw
 
-from continent_db import ContinentDB, MatchDB, SummonerDB
-from match_request_thread import crawl_continent
-from league_arrow import LolDataset
+from .continent_db import ContinentDB, MatchDB, SummonerDB
+from .match_request_thread import crawl_continent
+from .league_arrow import LolDataset
 
 
-def main(continents: list[str], match_db_path: str, sum_db_path: str, matches_path: Path, dataset_path: Path,
-         lolwatcher: rw.LolWatcher) -> None:
+def gather(continents: list[str], match_db_path: str, sum_db_path: str, matches_path: Path, dataset_path: Path,
+           lolwatcher: rw.LolWatcher) -> None:
     # open database environments
     os.makedirs(match_db_path, exist_ok=True)
     match_env = lmdb.open(match_db_path, max_dbs=len(continents))
