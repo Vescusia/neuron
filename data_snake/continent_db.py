@@ -4,7 +4,7 @@ import numpy as np
 from lmdb import Environment
 
 import lib
-from encoded_puuid import EncodedPUUID
+from .encoded_puuid import EncodedPUUID
 
 
 class ContinentDB:

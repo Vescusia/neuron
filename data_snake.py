@@ -4,7 +4,7 @@ import click
 import riotwatcher as rw
 
 import lib
-from data_snake import main
+import data_snake
 
 
 @click.command()
@@ -25,11 +25,8 @@ def cli(api_key: str, continent: str, match_db: str, sum_db: str, matches: str, 
         case i:
             continents.append(i)
 
-    # test key validity
-    _ = lolwatcher.league.masters_by_queue("EUW1", "RANKED_SOLO_5x5")
-
     # call the main match gathering function
-    main(continents, match_db, sum_db, Path(matches), Path(dataset), lolwatcher)
+    data_snake.gather(continents, match_db, sum_db, Path(matches), Path(dataset), lolwatcher)
 
 
 if __name__ == "__main__":

@@ -6,10 +6,10 @@ from pprint import pprint
 import riotwatcher as rw
 
 import lib
-from continent_db import MatchDB, SummonerDB
-from compressed_json_ball import CompressedJSONBall
-from league_arrow import ContinentDataset
-from reqtimecalc import ReqTimeCalc
+from .continent_db import MatchDB, SummonerDB
+from .compressed_json_ball import CompressedJSONBall
+from .league_arrow import ContinentDataset
+from .reqtimecalc import ReqTimeCalc
 
 
 def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, dataset: ContinentDataset, lolwatcher: rw.LolWatcher) -> None:

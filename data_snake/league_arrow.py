@@ -2,7 +2,6 @@ from pathlib import Path
 
 from numpy import uint8
 import pyarrow as pa
-import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
 import lib

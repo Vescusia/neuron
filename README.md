@@ -15,11 +15,11 @@ Our highest priority has draft analysis. Although, things like items, runes, jun
 
 ## Usage
 ### Gathering Data
-Right now, gathering match data is the only feature Neuron actually supports. 
+Right now, gathering match data is the only feature Neuron actually supports.
 
-The source code for gathering match data is in './data_snake'
-
-```python3 ./data_snake/cli.py <YOUR_API_KEY> --continent EUROPE```
+Running
+```python3 ./data_snake.py <YOUR_API_KEY> --continent EUROPE```
+will start gathering matches for all regions in Europe.
 
 This will start gathering ranked 5v5 matches from all regions and ranks in Europe (EUW, EUN...).
 
