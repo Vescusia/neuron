@@ -18,11 +18,13 @@ def gather(continents: list[str], match_db_path: str, sum_db_path: str, matches_
            lolwatcher: rw.LolWatcher) -> None:
     # open database environments
     os.makedirs(match_db_path, exist_ok=True)
-    match_env = lmdb.open(match_db_path, max_dbs=len(continents))
-    print("MatchDB stats:", match_env.info())
+    match_env = lmdb.open(match_db_path, map_size=1_000_000_000, max_dbs=len(continents))
     os.makedirs(sum_db_path, exist_ok=True)
-    sum_env = lmdb.open(sum_db_path, max_dbs=len(continents))
-    print("SummonerDB stats:", sum_env.info())
+    sum_env = lmdb.open(sum_db_path, map_size=2_250_000_000, max_dbs=len(continents))
+
+    # print environment state
+    print(f"SummonerDB: {match_env.stat()['psize'] * match_env.info()['last_pgno'] / match_env.info()['map_size'] * 100:.1f} % full ({match_env.info()})")
+    print(f"SummonerDB: {sum_env.stat()['psize'] * sum_env.info()['last_pgno'] / sum_env.info()['map_size'] * 100:.1f} % full ({sum_env.info()})")
 
     # open dataset
     dataset = LolDataset(dataset_path, write_interval=3_000)  # write once per hour
@@ -48,7 +50,7 @@ def gather(continents: list[str], match_db_path: str, sum_db_path: str, matches_
 
     # wait for stop signal from user
     signal.signal(signal.SIGINT,
-                  lambda x, y: [[stop_q.put(None) for _ in continents], print("\nShutting down, please stand by...")])
+                  lambda x, y: [stop_q.put(None), print("\nShutting down, please stand by...")])
     for future in futures:
         # has to be done this way to receive signals ¯\_(ツ)_/¯
         while future.is_alive():

@@ -19,9 +19,7 @@ Right now, gathering match data is the only feature Neuron actually supports.
 
 Running
 ```python3 ./data_snake.py <YOUR_API_KEY> --continent EUROPE```
-will start gathering matches for all regions in Europe.
-
-This will start gathering ranked 5v5 matches from all regions and ranks in Europe (EUW, EUN...).
+will start gathering ranked 5v5 matches from all regions and ranks in Europe (EUW, EUN...).
 
 ## Architecture
 ### Gathering Data
@@ -46,4 +44,4 @@ Currently, Neuron depends on
 * [lmdb](https://pypi.org/project/lmdb/), LMDB bindings for python
 * [click](https://click.palletsprojects.com/en/stable/), a quick but solid CLI library
 * numpy
-* 
+* [pyarrow](https://arrow.apache.org/docs/python/index.html) for fast columnar data storage

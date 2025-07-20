@@ -2,6 +2,7 @@ from pathlib import Path
 
 from numpy import uint8
 import pyarrow as pa
+import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
 import lib
@@ -50,7 +51,7 @@ class ContinentDataset:
         encoded_picks = [lib.encoded_champ_id.to_int(pick) for pick in picks]
 
         # map to schema
-        row = [encoded_patch, ranked_score, win] + encoded_picks + encoded_bans
+        row = [encoded_patch, ranked_score, win] + [encoded_picks] + [encoded_bans]
         row = {self.schema.field(i).name: col for i, col in enumerate(row)}
 
         # append row to the match list
@@ -58,9 +59,9 @@ class ContinentDataset:
 
         # write to disk if the interval is reached
         if len(self.match_list) >= self.write_interval:
-            self._write_match_list()
+            self.write_match_list()
 
-    def _write_match_list(self):
+    def write_match_list(self):
         table = pa.Table.from_pylist(self.match_list, schema=self.schema)
         self.match_list.clear()
 
@@ -81,9 +82,9 @@ class LolDataset:
                 ("patch", pa.uint16()),
                 ("ranked_score", pa.uint8()),
                 ("win", pa.bool_()),
+                ("picks", pa.list_(pa.uint8(), 10)),
+                ("bans", pa.list_(pa.uint8(), 10)),
             ]
-            + [(f"pick{i}", pa.uint8()) for i in range(10)]
-            + [(f"ban{i}", pa.uint8()) for i in range(10)]
         )
         self.base_path = base_path
         self.write_interval = write_interval

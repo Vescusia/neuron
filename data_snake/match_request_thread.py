@@ -13,6 +13,9 @@ from .reqtimecalc import ReqTimeCalc
 
 
 def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, dataset: ContinentDataset, lolwatcher: rw.LolWatcher) -> None:
+    # print database state
+    print(f"{sum_db.continent}: {sum_db.count()} Summoners, {match_db.count()} Matches")
+
     # variable for incremental explored matches,
     # with incremental meaning between updates to state_q
     inc_explored_matches = 0
@@ -26,7 +29,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
     while True:
         # break if we get the signal to stop
         if not stop_q.empty():
-            stop_q.get()
+            state_q.put(inc_explored_matches)
             break
 
         # search for unexplored match
@@ -63,6 +66,9 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
     # close the matches ball
     matches_ball.close()
 
+    # write matches between intervals to dataset
+    dataset.write_match_list()
+
 
 def explore_player(match_db: MatchDB, sum_db: SummonerDB, stop_q: Queue[None], lolwatcher: rw.LolWatcher) -> None:
     # search for a player whose next request time is in the past (can be explored again)
@@ -96,14 +102,23 @@ def explore_player(match_db: MatchDB, sum_db: SummonerDB, stop_q: Queue[None], l
     matches = lolwatcher.match.matchlist_by_puuid(match_db.continent, unexplored_sum_id, count=100, type="ranked", queue=420)
 
     # get the rank of the summoner
-    league = lolwatcher.league.by_puuid(matches[0].split('_')[0], unexplored_sum_id)[0]
+    leagues = lolwatcher.league.by_puuid(matches[0].split('_')[0], unexplored_sum_id)
+    league = next((league for league in leagues if league['queueType'] == "RANKED_SOLO_5x5"), None)
 
-    # insert into the match database
-    total, new_inserted = match_db.put_multi([(m_id, False, league['tier'], league['rank']) for m_id in matches])
+    # insert into the match database if the summoner is ranked
+    if league is not None:
+        total, new_inserted = match_db.put_multi([(m_id, False, league['tier'], league['rank']) for m_id in matches])
+    else:
+        print("unranked summoner, skipping...")
+        total, new_inserted = 1, 0
 
     # update summoner
     next_time, wait_time = ReqTimeCalc(wait_time).step(new_inserted / total)
     sum_db.put(unexplored_sum_id, next_time, wait_time)
+
+    # if we did not insert any new matches, recurse
+    if new_inserted == 0:
+        return explore_player(match_db, sum_db, stop_q, lolwatcher)
 
     return None
 

@@ -20,6 +20,10 @@ class ContinentDB:
     def begin(self, write: bool = False, **kwargs):
         return self.env.begin(write=write, db=self.db, **kwargs)
 
+    def count(self) -> int:
+        with self.begin() as txn:
+            return sum(1 for _ in txn.cursor())
+
     def __str__(self):
         return f"RegionDB({self.continent})"
 
@@ -33,7 +37,7 @@ class SummonerDB:
     """
 
     def __init__(self, continent_db: ContinentDB):
-        self.cdb = continent_db
+        self._cdb = continent_db
         self.continent = continent_db.continent
 
     @staticmethod
@@ -60,12 +64,12 @@ class SummonerDB:
         """
         key, value = self._encode_entry(puuid, next_fetch_time, wait_time)
 
-        with self.cdb.begin(write=True) as txn:
+        with self._cdb.begin(write=True) as txn:
             return txn.put(key, value, overwrite)
 
     def get(self, puuid: str) -> tuple[int, float] | None:
         puuid = EncodedPUUID(puuid)
-        with self.cdb.begin() as txn:
+        with self._cdb.begin() as txn:
             return self._decode_entry(txn.get(puuid))
 
     def put_multi(self, entries: list[tuple[str, int, int]], overwrite=False) -> tuple[int, int]:
@@ -76,7 +80,7 @@ class SummonerDB:
         """
         encoded = [self._encode_entry(s, t, w) for s, t, w in entries]
 
-        with self.cdb.begin(write=True) as txn:
+        with self._cdb.begin(write=True) as txn:
             cur = txn.cursor()
             return cur.putmulti(encoded, overwrite=overwrite)
 
@@ -86,7 +90,7 @@ class SummonerDB:
         """
         puuids = [EncodedPUUID(puuid) for puuid in puuids]
 
-        with self.cdb.begin() as txn:
+        with self._cdb.begin() as txn:
             cur = txn.cursor()
             keys_and_values = cur.getmulti(puuids)
 
@@ -100,7 +104,7 @@ class SummonerDB:
         """
         now = time()
 
-        with self.cdb.begin() as txn:
+        with self._cdb.begin() as txn:
             cur = txn.cursor()
             for key, value in cur:
                 fetch_time, wait_time = self._decode_entry(value)
@@ -108,6 +112,12 @@ class SummonerDB:
                     return EncodedPUUID(key).decode(), fetch_time, wait_time
 
             return None
+
+    def count(self) -> int:
+        """
+        Count the number of summoners in this database.
+        """
+        return self._cdb.count()
 
     def __str__(self):
         return f"SummonerDB({self.continent})"
@@ -122,7 +132,7 @@ class MatchDB:
     """
 
     def __init__(self, continent_db: ContinentDB):
-        self.cdb = continent_db
+        self._cdb = continent_db
         self.continent = continent_db.continent
 
     def put(self, match_id: str, explored: bool, tier: str, division: str, overwrite=False) -> bool:
@@ -131,13 +141,13 @@ class MatchDB:
         """
         key, value = self._encode_entry(match_id, explored, tier, division)
 
-        with self.cdb.begin(write=True) as txn:
+        with self._cdb.begin(write=True) as txn:
             return txn.put(key, value, overwrite=overwrite)
 
     def set_explored(self, match_id: str) -> bool:
         encoded_match_id = lib.encoded_match_id.to_bytes(match_id)
 
-        with self.cdb.begin(write=True) as txn:
+        with self._cdb.begin(write=True) as txn:
             value = txn.get(encoded_match_id)
             return txn.put(encoded_match_id, int.to_bytes(1), value[1], overwrite=True)
 
@@ -163,7 +173,7 @@ class MatchDB:
     def get(self, match_id: str) -> tuple[bool, str, str] | None:
         encoded_match_id = lib.encoded_match_id.to_bytes(match_id)
 
-        with self.cdb.begin() as txn:
+        with self._cdb.begin() as txn:
             return self._decode_entry(txn.get(encoded_match_id))
 
     def put_multi(self, matches: list[tuple[str, bool, str, str]], overwrite=False) -> tuple[int, int]:
@@ -174,7 +184,7 @@ class MatchDB:
         """
         keys_and_values = [self._encode_entry(match_id, fetched, tier, div) for match_id, fetched, tier, div in matches]
 
-        with self.cdb.begin(write=True) as txn:
+        with self._cdb.begin(write=True) as txn:
             cur = txn.cursor()
             return cur.putmulti(keys_and_values, overwrite=overwrite)
 
@@ -184,7 +194,7 @@ class MatchDB:
 
         :return: tuple (match_id, encoded rank) or None if no match is found.
         """
-        with self.cdb.begin() as txn:
+        with self._cdb.begin() as txn:
             cur = txn.cursor()
             for key, value in cur:
                 explored, rank = self._decode_entry(value)
@@ -192,6 +202,12 @@ class MatchDB:
                     return lib.encoded_match_id.to_match_id(key), rank
 
             return None
+
+    def count(self) -> int:
+        """
+        Count the number of matches in this database.
+        """
+        return self._cdb.count()
 
     def __str__(self):
         return f"MatchDB({self.continent})"
