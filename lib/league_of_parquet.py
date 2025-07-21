@@ -79,7 +79,7 @@ class ContinentDatasetWriter:
         """
         table = pa.Table.from_pylist(self.match_list, schema=schema)
 
-        pq.write_to_dataset(table, self.base_path, template=self.continent + "{i}_" + str(len(self.match_list)) + ".pq")
+        pq.write_to_dataset(table, self.base_path, basename_template=self.continent + "_{i}_" + str(len(self.match_list)) + ".pq")
         self.match_list.clear()
 
 

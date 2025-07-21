@@ -36,10 +36,12 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
 
             # search for unexplored match
             while True:
+                # query match database for an unexplored match
                 unexplored_match = match_db.unexplored_match()
                 if unexplored_match is not None:
                     new_match_id, ranked_score = unexplored_match
                     break
+                # if the match database does not contain any unexplored matches anymore
                 else:
                     # request match history from an unexplored player
                     explore_player(match_db, sum_db, stop_q, lolwatcher)
@@ -48,8 +50,17 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
                     inc_explored_matches = 0
 
             # request Match from RiotAPI
-            new_match = lolwatcher.match.by_id(match_db.continent, new_match_id)
-            inc_explored_matches += 1
+            try:
+                new_match = lolwatcher.match.by_id(match_db.continent, new_match_id)
+            except rw.ApiError as e:
+                # check if this match id is invalid
+                if e.response.status_code == 404:
+                    print(f"\n[ERROR] Match {new_match_id} is invalid, skipping...\n")
+                    # mark as explored
+                    match_db.set_explored(new_match_id)
+                    continue
+                else:
+                    raise e
 
             # add match to dataset
             dataset.append(new_match, ranked_score)
@@ -64,10 +75,11 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
 
             # mark Match as explored
             match_db.set_explored(new_match_id)
+            inc_explored_matches += 1
 
         # catch the errors that just sometimes happen with web traffic.
         except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError) as e:
-            print(f"\n\n[ERROR]: {traceback.format_exception(e)} \n\n")
+            print(f"\n\n[ERROR]: {str(traceback.format_exception(e))} \n\n")
             continue
 
     # close the matches ball
