@@ -1,5 +1,5 @@
 from pathlib import Path
-from time import time
+from time import time, sleep
 from queue import Queue
 import traceback
 
@@ -78,8 +78,11 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
             inc_explored_matches += 1
 
         # catch the errors that just sometimes happen with web traffic.
-        except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError) as e:
-            print(f"\n\n[ERROR]: {str(traceback.format_exception(e))} \n\n")
+        except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
+            print("\n[ERROR]:")
+            traceback.print_exception(e)
+            print("\nContinuing...")
+            sleep(5)
             continue
 
     # close the matches ball

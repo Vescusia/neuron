@@ -65,4 +65,4 @@ def state_printer(state_q: Queue[int]) -> None:
     while True:
         total += state_q.get()
         print(
-            f"[{datetime.now().strftime('%H:%M-%d.%m.%y')}] {total} Matches explored. ({total / (time() - start):02f}/s)")
+            f"[{datetime.now().strftime('%H:%M-%d.%m.%y')}] {total:06} Matches explored. ({total / (time() - start):.1f}/s)")

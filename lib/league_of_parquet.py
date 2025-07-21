@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import time
 
 from numpy import uint8
 import pyarrow as pa
@@ -79,7 +80,7 @@ class ContinentDatasetWriter:
         """
         table = pa.Table.from_pylist(self.match_list, schema=schema)
 
-        pq.write_to_dataset(table, self.base_path, basename_template=self.continent + "_{i}_" + str(len(self.match_list)) + ".pq")
+        pq.write_to_dataset(table, self.base_path, basename_template=f"{int(time())}_{len(self.match_list)}.pq")
         self.match_list.clear()
 
 
