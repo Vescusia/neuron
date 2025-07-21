@@ -45,3 +45,4 @@ Currently, Neuron depends on
 * [click](https://click.palletsprojects.com/en/stable/), a quick but solid CLI library
 * numpy
 * [pyarrow](https://arrow.apache.org/docs/python/index.html) for fast columnar data storage
+* [duckdb](https://duckdb.org) for easy SQL querying of different data formats

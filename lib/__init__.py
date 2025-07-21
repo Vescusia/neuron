@@ -23,3 +23,4 @@ import lib.encoded_champ_id
 import lib.encoded_rank
 import lib.encoded_match_id
 import lib.encoded_patch
+import lib.league_of_parquet

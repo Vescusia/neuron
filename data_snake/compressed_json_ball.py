@@ -2,12 +2,12 @@ from pathlib import Path
 from os.path import exists
 from os import rename
 from json import dumps
-import lzma
+import gzip  # lz4 at 6 -> ~45 MB @ 10_000 matches
 
 
 class CompressedJSONBall:
     """
-    An LZMA compressed JSON 'Ball', meaning a single file with multiple JSON objects.
+    A zlib (gzip) compressed JSON 'Ball', meaning a single file with multiple JSON objects.
     """
 
     def __init__(self, path: Path, append_to_file_name=True, split_every: int | None = 100_000, _splits: int = 0):
@@ -21,7 +21,7 @@ class CompressedJSONBall:
         self.path = path
         self._original_path = path
         self._num_of_objects = 0
-        self._file = lzma.open(path, "w", preset=6)
+        self._file = gzip.open(path, "w", compresslevel=7)
         self.append_to_file_name = append_to_file_name
         self.split_every = split_every
         self._num_of_splits = 0

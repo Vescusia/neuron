@@ -8,13 +8,23 @@ import pyarrow.parquet as pq
 import lib
 
 
-class ContinentDataset:
+schema = pa.schema(
+            [
+                ("patch", pa.uint16()),
+                ("ranked_score", pa.uint8()),
+                ("win", pa.bool_()),
+                ("picks", pa.list_(pa.uint8(), 10)),
+                ("bans", pa.list_(pa.uint8(), 10)),
+            ]
+        )
+
+
+class ContinentDatasetWriter:
     """
-    A continent-specific Dataset. Please do not construct this class directly; use LolDataset instead.
+    A continent-specific Dataset Writer. Please do not construct this class directly; use LolDatasetWriter instead.
     """
 
-    def __init__(self, _schema: pa.Schema, _base_path: Path, _continent: str, _write_interval: int):
-        self.schema = _schema
+    def __init__(self, _base_path: Path, _continent: str, _write_interval: int):
         self.continent = _continent
         self.write_interval = _write_interval
 
@@ -52,7 +62,7 @@ class ContinentDataset:
 
         # map to schema
         row = [encoded_patch, ranked_score, win] + [encoded_picks] + [encoded_bans]
-        row = {self.schema.field(i).name: col for i, col in enumerate(row)}
+        row = {schema.field(i).name: col for i, col in enumerate(row)}
 
         # append row to the match list
         self.match_list.append(row)
@@ -62,32 +72,35 @@ class ContinentDataset:
             self.write_match_list()
 
     def write_match_list(self):
-        table = pa.Table.from_pylist(self.match_list, schema=self.schema)
+        """
+        Write the match list to disk.
+        This method is called automatically when the write_interval is reached but should be called manually otherwise.
+        :return:
+        """
+        table = pa.Table.from_pylist(self.match_list, schema=schema)
+
+        pq.write_to_dataset(table, self.base_path, template=self.continent + "{i}_" + str(len(self.match_list)) + ".pq")
         self.match_list.clear()
 
-        pq.write_to_dataset(table, self.base_path, partition_cols=["patch"])
 
-
-class LolDataset:
+class LolDatasetWriter:
     """
-    Overarching dataset class. For writing, use open_continent/ContinentDataset instead.
+    Dataset writing class. This class is meant to be used as a context manager.
+    Use .open_continent() to open a continent-specific DatasetWriter.
+
+    Uses the parquet format.
     :param base_path: The base path for the dataset. It will be created if it doesn't exist.
     :param write_interval: The number of matches that will be cached before being written to disk.
     """
 
     def __init__(self, base_path: Path, write_interval: int = 1_000):
         # define schema for the dataset
-        self.schema = pa.schema(
-            [
-                ("patch", pa.uint16()),
-                ("ranked_score", pa.uint8()),
-                ("win", pa.bool_()),
-                ("picks", pa.list_(pa.uint8(), 10)),
-                ("bans", pa.list_(pa.uint8(), 10)),
-            ]
-        )
         self.base_path = base_path
         self.write_interval = write_interval
 
-    def open_continent(self, continent: str) -> ContinentDataset:
-        return ContinentDataset(self.schema, self.base_path, continent, self.write_interval)
+    def open_continent(self, continent: str) -> ContinentDatasetWriter:
+        return ContinentDatasetWriter(self.base_path, continent, self.write_interval)
+
+
+def open_dataset(base_path: str | Path) -> ds.Dataset:
+    return ds.dataset(base_path, format="parquet", partitioning="hive", schema=lib.league_of_parquet.schema)

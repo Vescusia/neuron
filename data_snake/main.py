@@ -11,7 +11,7 @@ import riotwatcher as rw
 
 from .continent_db import ContinentDB, MatchDB, SummonerDB
 from .match_request_thread import crawl_continent
-from .league_arrow import LolDataset
+from lib.league_of_parquet import LolDatasetWriter
 
 
 def gather(continents: list[str], match_db_path: str, sum_db_path: str, matches_path: Path, dataset_path: Path,
@@ -27,7 +27,7 @@ def gather(continents: list[str], match_db_path: str, sum_db_path: str, matches_
     print(f"SummonerDB: {sum_env.stat()['psize'] * sum_env.info()['last_pgno'] / sum_env.info()['map_size'] * 100:.1f} % full ({sum_env.info()})")
 
     # open dataset
-    dataset = LolDataset(dataset_path, write_interval=3_000)  # write once per hour
+    dataset = LolDatasetWriter(dataset_path, write_interval=3_000)  # write once per hour
 
     # start thread for each continent
     stop_q, state_q = Queue(), Queue()

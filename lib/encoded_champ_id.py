@@ -195,6 +195,13 @@ _id_to_int_map: dict[int, uint8] = {champ: uint8(i) for champ, i in _id_to_int_m
 _int_to_id_map: dict[uint8, int] = {v: k for k, v in _id_to_int_map.items()}
 
 
+def name_to_int(champ_name: str) -> uint8:
+    """
+    :param champ_name: Name (in lib.CHAMPIONS 'id') of the champion. E.g., "Belveth", not "Bel'Veth"
+    """
+    return _id_to_int_map[int(CHAMPIONS[champ_name]['key'])]
+
+
 def to_int(champ_id: int) -> uint8:
     return _id_to_int_map[champ_id]
 

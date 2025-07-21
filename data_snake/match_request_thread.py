@@ -1,18 +1,19 @@
 from pathlib import Path
 from time import time
 from queue import Queue
-from pprint import pprint
+import traceback
 
+import requests
 import riotwatcher as rw
 
 import lib
+from lib.league_of_parquet import ContinentDatasetWriter
 from .continent_db import MatchDB, SummonerDB
 from .compressed_json_ball import CompressedJSONBall
-from .league_arrow import ContinentDataset
 from .reqtimecalc import ReqTimeCalc
 
 
-def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, dataset: ContinentDataset, lolwatcher: rw.LolWatcher) -> None:
+def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, dataset: ContinentDatasetWriter, lolwatcher: rw.LolWatcher) -> None:
     # print database state
     print(f"{sum_db.continent}: {sum_db.count()} Summoners, {match_db.count()} Matches")
 
@@ -21,47 +22,53 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
     inc_explored_matches = 0
 
     # create matches_dir for JSON files
-    matches_path = matches_path / match_db.continent / f"{int(time())}.xz"
+    matches_path = matches_path / match_db.continent / f"{int(time())}.gzip"
     matches_path.parent.mkdir(parents=True, exist_ok=True)
     # open lzma compressed JSON ball
     matches_ball = CompressedJSONBall(matches_path, split_every=36_000)
 
     while True:
-        # break if we get the signal to stop
-        if not stop_q.empty():
-            state_q.put(inc_explored_matches)
-            break
-
-        # search for unexplored match
-        while True:
-            unexplored_match = match_db.unexplored_match()
-            if unexplored_match is not None:
-                new_match_id, ranked_score = unexplored_match
-                break
-            else:
-                # request match history from an unexplored player
-                explore_player(match_db, sum_db, stop_q, lolwatcher)
-                # update explored matches
+        try:
+            # break if we get the signal to stop
+            if not stop_q.empty():
                 state_q.put(inc_explored_matches)
-                inc_explored_matches = 0
+                break
 
-        # request Match from RiotAPI
-        new_match = lolwatcher.match.by_id(match_db.continent, new_match_id)
-        inc_explored_matches += 1
+            # search for unexplored match
+            while True:
+                unexplored_match = match_db.unexplored_match()
+                if unexplored_match is not None:
+                    new_match_id, ranked_score = unexplored_match
+                    break
+                else:
+                    # request match history from an unexplored player
+                    explore_player(match_db, sum_db, stop_q, lolwatcher)
+                    # update explored matches
+                    state_q.put(inc_explored_matches)
+                    inc_explored_matches = 0
 
-        # add match to dataset
-        dataset.append(new_match, ranked_score)
+            # request Match from RiotAPI
+            new_match = lolwatcher.match.by_id(match_db.continent, new_match_id)
+            inc_explored_matches += 1
 
-        # save match JSON
-        matches_ball.append(new_match)
+            # add match to dataset
+            dataset.append(new_match, ranked_score)
 
-        # add participants to SummonerDB
-        puuids = [participant['puuid'] for participant in new_match['info']['participants']]
-        request_times = [ReqTimeCalc.initial() for _ in puuids]
-        sum_db.put_multi([(puuid, req, wait_time) for puuid, (req, wait_time) in zip(puuids, request_times)])
+            # save match JSON
+            matches_ball.append(new_match)
 
-        # mark Match as explored
-        match_db.set_explored(new_match_id)
+            # add participants to SummonerDB
+            puuids = [participant['puuid'] for participant in new_match['info']['participants']]
+            request_times = [ReqTimeCalc.initial() for _ in puuids]
+            sum_db.put_multi([(puuid, req, wait_time) for puuid, (req, wait_time) in zip(puuids, request_times)])
+
+            # mark Match as explored
+            match_db.set_explored(new_match_id)
+
+        # catch the errors that just sometimes happen with web traffic.
+        except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError) as e:
+            print(f"\n\n[ERROR]: {traceback.format_exception(e)} \n\n")
+            continue
 
     # close the matches ball
     matches_ball.close()
