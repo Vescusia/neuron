@@ -41,7 +41,13 @@ class ContinentDatasetWriter:
         Once the table has reached a certain size (write_interval in LolDataset), it will be written to disk.
         """
         # encode patch
-        encoded_patch = lib.encoded_patch.to_int(match['info']['gameVersion'])
+        patch = match['info']['gameVersion']
+        if not patch:
+            # sometimes, something goes wrong and the gameVersion simply is null.
+            # ignore it
+            print(f"{match['info']['matchId']} has no patch/gameVersion. ignoring...")
+            return
+        encoded_patch = lib.encoded_patch.to_int(patch)
 
         # extract if the blue side won
         win: bool = match['info']['teams'][0]['win']
@@ -80,7 +86,7 @@ class ContinentDatasetWriter:
         """
         table = pa.Table.from_pylist(self.match_list, schema=schema)
 
-        pq.write_to_dataset(table, self.base_path, basename_template=f"{int(time())}_{len(self.match_list)}.pq")
+        pq.write_to_dataset(table, self.base_path, basename_template=str(int(time())) + "_{i}_" + str(len(self.match_list)) + ".pq")
         self.match_list.clear()
 
 

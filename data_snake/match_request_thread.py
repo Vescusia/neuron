@@ -136,7 +136,7 @@ def explore_player(match_db: MatchDB, sum_db: SummonerDB, stop_q: Queue[None], l
 
     # update summoner
     next_time, wait_time = ReqTimeCalc(wait_time).step(new_inserted / total)
-    sum_db.put(unexplored_sum_id, next_time, wait_time)
+    sum_db.put(unexplored_sum_id, next_time, wait_time, overwrite=True)
 
     # if we did not insert any new matches, recurse
     if new_inserted == 0:

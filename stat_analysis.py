@@ -59,8 +59,8 @@ def synergy(champ0: str, champ1: str) -> (float, int):
 if __name__ == "__main__":
     print(_dataset.count_rows())
 
-    champ = "Lux"
-    alternate = "Zac"
+    champ = "Ahri"
+    alternate = "Caitlyn"
 
     bs_wr, rs_wr, total_wr, num_matches = champ_winrate(champ)
     print(f"{champ}: blue side winrate: {bs_wr:.2%}, red side winrate: {rs_wr:.2%}, total winrate: {total_wr:.2%}, num of matches: {num_matches}")
