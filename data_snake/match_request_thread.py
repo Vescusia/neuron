@@ -13,7 +13,10 @@ from .compressed_json_ball import CompressedJSONBall
 from .reqtimecalc import ReqTimeCalc
 
 
-def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, dataset: ContinentDatasetWriter, lolwatcher: rw.LolWatcher) -> None:
+def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, dataset: ContinentDatasetWriter, lolwatcher: rw.LolWatcher) -> None:
+    # define the continent we are crawling by copying the one from the continent-specific match database
+    continent = match_db.continent
+
     # print database state
     print(f"{sum_db.continent}: {sum_db.count()} Summoners, {match_db.count()} Matches")
 
@@ -22,7 +25,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
     inc_explored_matches = 0
 
     # create matches_dir for JSON files
-    matches_path = matches_path / match_db.continent / f"{int(time())}.gzip"
+    matches_path = matches_path / continent / f"{int(time())}.gzip"
     matches_path.parent.mkdir(parents=True, exist_ok=True)
     # open lzma compressed JSON ball
     matches_ball = CompressedJSONBall(matches_path, split_every=36_000)
@@ -44,21 +47,25 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
                 # if the match database does not contain any unexplored matches anymore
                 else:
                     # request match history from an unexplored player
-                    explore_player(match_db, sum_db, stop_q, lolwatcher)
+                    total_matches_fetched, new_matches_fetched = fetch_player(match_db, sum_db, lolwatcher)
                     # update explored matches
-                    state_q.put(inc_explored_matches)
+                    state_q.put((inc_explored_matches, (total_matches_fetched, new_matches_fetched)))
                     inc_explored_matches = 0
 
             # request Match from RiotAPI
             try:
-                new_match = lolwatcher.match.by_id(match_db.continent, new_match_id)
+                new_match = lolwatcher.match.by_id(continent, new_match_id)
             except rw.ApiError as e:
                 # check if this match id is invalid
                 if e.response.status_code == 404:
-                    print(f"\n[ERROR] Match {new_match_id} is invalid, skipping...\n")
+                    print(f"\n[ERROR {continent}] Match {new_match_id} is invalid, skipping...\n")
                     # mark as explored
                     match_db.set_explored(new_match_id)
                     continue
+                # check if the API key has become unauthorized
+                elif e.response.status_code == 401:
+                    print(f"\n[ERROR {continent}] Unauthorized API Key, exiting...\n")
+                    break
                 else:
                     raise e
 
@@ -79,7 +86,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
 
         # catch the errors that just sometimes happen with web traffic.
         except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
-            print("\n[ERROR]:")
+            print(f"\n[ERROR {continent}]:")
             traceback.print_exception(e)
             print("\nContinuing...")
             sleep(5)
@@ -92,12 +99,20 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue[int], match_db: MatchDB,
     dataset.write_match_list()
 
 
-def explore_player(match_db: MatchDB, sum_db: SummonerDB, stop_q: Queue[None], lolwatcher: rw.LolWatcher) -> None:
-    # search for a player whose next request time is in the past (can be explored again)
-    unexplored_sum = sum_db.expired_summoner()
+def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatcher) -> tuple[int, int]:
+    """
+    Fetch the match history of a player, inserting new matches into the match database.
+    Fetching the match history of a player will update the summoner's request time,
+    which forbids fetching their match history again for a while (such that they can play matches).
 
-    # check if we found an unexplored summoner
-    if unexplored_sum is None:
+    :return: Tuple (total matches fetched, new matches found)
+    """
+
+    # search for a player whose next request time is in the past (can be fetched again)
+    unfetched_sum = sum_db.expired_summoner()
+
+    # check if we found an unfetched summoner
+    if unfetched_sum is None:
         print(f"\n\n{sum_db} Ran out of players, getting new ones!\n")
 
         # get new players from challenger leagues
@@ -115,34 +130,39 @@ def explore_player(match_db: MatchDB, sum_db: SummonerDB, stop_q: Queue[None], l
             raise Exception(f"\n\n\n\n[ERROR] {sum_db} Completely RAN OUT OF SUMMONERS\n\n")
         else:
             print("\nAdded", new, "unexplored players!")
-            return explore_player(match_db, sum_db, stop_q, lolwatcher)
+            return fetch_player(match_db, sum_db, lolwatcher)
 
     else:
-        unexplored_sum_id, _, wait_time = unexplored_sum
+        summoner_id, _, wait_time = unfetched_sum
 
     # get the match history of the summoner
-    matches = lolwatcher.match.matchlist_by_puuid(match_db.continent, unexplored_sum_id, count=100, type="ranked", queue=420)
+    matches = lolwatcher.match.matchlist_by_puuid(match_db.continent, summoner_id, count=100, type="ranked", queue=420)
 
     # get the rank of the summoner
-    leagues = lolwatcher.league.by_puuid(matches[0].split('_')[0], unexplored_sum_id)
-    league = next((league for league in leagues if league['queueType'] == "RANKED_SOLO_5x5"), None)
+    if len(matches) > 0:
+        leagues = lolwatcher.league.by_puuid(matches[0].split('_')[0], summoner_id)
+        league = next((league for league in leagues if league['queueType'] == "RANKED_SOLO_5x5"), None)
+    else:
+        league = None
 
     # insert into the match database if the summoner is ranked
     if league is not None:
         total, new_inserted = match_db.put_multi([(m_id, False, league['tier'], league['rank']) for m_id in matches])
     else:
         print("unranked summoner, skipping...")
+        # set new inserted to zero instead of recursing to mark this player as explored
         total, new_inserted = 1, 0
 
     # update summoner
     next_time, wait_time = ReqTimeCalc(wait_time).step(new_inserted / total)
-    sum_db.put(unexplored_sum_id, next_time, wait_time, overwrite=True)
+    sum_db.put(summoner_id, next_time, wait_time, overwrite=True)
 
-    # if we did not insert any new matches, recurse
+    # if we did not insert any new matches, recursively explore other players
     if new_inserted == 0:
-        return explore_player(match_db, sum_db, stop_q, lolwatcher)
+        new_total, new_new_inserted = fetch_player(match_db, sum_db, lolwatcher)
+        return total + new_total, new_inserted + new_new_inserted
 
-    return None
+    return total, new_inserted
 
 
 # collect the players from the grandmaster leagues of all regions in our continent

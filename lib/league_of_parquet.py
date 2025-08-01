@@ -45,7 +45,7 @@ class ContinentDatasetWriter:
         if not patch:
             # sometimes, something goes wrong and the gameVersion simply is null.
             # ignore it
-            print(f"{match['info']['matchId']} has no patch/gameVersion. ignoring...")
+            print(f"{match['metadata']['matchId']} has no patch/gameVersion. ignoring...")
             return
         encoded_patch = lib.encoded_patch.to_int(patch)
 

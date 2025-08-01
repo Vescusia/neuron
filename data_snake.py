@@ -10,11 +10,8 @@ import data_snake
 @click.command()
 @click.argument("api-key")
 @click.option("-c", "--continent", default="ALL", help="Continents to Scan (default: ALL)", type=click.Choice(lib.CONTINENTS + ["ALL"]))
-@click.option("-mdb", "--match-db", default="./data/match_db", type=click.Path(dir_okay=True, file_okay=False), help="Path to Match Database (Directory!) (default: ./data/match_db")
-@click.option("-sdb", "--sum-db", default="./data/sum_db", type=click.Path(dir_okay=True, file_okay=False), help="Path to Summoner Database (Directory!) (default: ./data/match_db")
-@click.option("--matches", default="./data/matches", type=click.Path(dir_okay=True, file_okay=False), help="Path to the Directory in which the Match Json will be saved (Directory!) (default: ./data/matches")
-@click.option("--dataset", default="./data/dataset", type=click.Path(dir_okay=True, file_okay=False), help="Path to the Directory in which the Dataset will be saved (Directory!) (default: ./data/dataset")
-def cli(api_key: str, continent: str, match_db: str, sum_db: str, matches: str, dataset: str) -> None:
+@click.option("--data-path", default="./data", type=click.Path(dir_okay=True, file_okay=False), help="Path to the directory in within the match data will be saved.")
+def main(api_key: str, continent: str, data_path) -> None:
     lolwatcher = rw.LolWatcher(api_key)
 
     # parse continents
@@ -25,9 +22,16 @@ def cli(api_key: str, continent: str, match_db: str, sum_db: str, matches: str, 
         case i:
             continents.append(i)
 
+    # construct the paths for the subdirectories within the data directory
+    data_path = Path(data_path)
+    match_db_path = data_path / "match_db"
+    sum_db_path = data_path / "sum_db"
+    matches_path = data_path / "matches"
+    dataset_path = data_path / "dataset"
+
     # call the main match gathering function
-    data_snake.gather(continents, match_db, sum_db, Path(matches), Path(dataset), lolwatcher)
+    data_snake.gather(continents, match_db_path, sum_db_path, matches_path, dataset_path, lolwatcher)
 
 
 if __name__ == "__main__":
-    cli()
+    main()
