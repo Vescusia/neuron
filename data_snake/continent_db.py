@@ -1,4 +1,4 @@
-from time import time
+from time import time, process_time
 
 import numpy as np
 from lmdb import Environment
@@ -92,9 +92,9 @@ class SummonerDB:
 
         with self._cdb.begin() as txn:
             cur = txn.cursor()
-            keys_and_values = cur.getmulti(puuids)
+            items = cur.getmulti(puuids)
 
-        decoded = [(EncodedPUUID(k).decode(), *self._decode_entry(v)) for k, v in keys_and_values if v is not None]
+        decoded = [(EncodedPUUID(k).decode(), *self._decode_entry(v)) for k, v in items if v is not None]
         return decoded
 
     def expired_summoner(self) -> tuple[str, int, int] | None:
@@ -129,6 +129,9 @@ class SummonerDB:
 class MatchDB:
     """
     ContinentDB interface specifically for matches.
+
+    This is using a legacy architecture!! It stores the 'explored' flag and the rank of the match as the value, but
+    that is not necessary anymore. This is only still supported for backwards compatibility.
     """
 
     def __init__(self, continent_db: ContinentDB):
@@ -143,13 +146,6 @@ class MatchDB:
 
         with self._cdb.begin(write=True) as txn:
             return txn.put(key, value, overwrite=overwrite)
-
-    def set_explored(self, match_id: str) -> bool:
-        encoded_match_id = lib.encoded_match_id.to_bytes(match_id)
-
-        with self._cdb.begin(write=True) as txn:
-            value = txn.get(encoded_match_id)
-            return txn.put(encoded_match_id, int.to_bytes(1), value[1], overwrite=True)
 
     @staticmethod
     def _encode_entry(match_id: str, explored: bool, tier: str, division: str) -> tuple[bytes, bytes]:
@@ -170,11 +166,24 @@ class MatchDB:
 
         return explored, rank_int
 
-    def get(self, match_id: str) -> tuple[bool, str, str] | None:
+    def get(self, match_id: str) -> tuple[bool, np.uint8] | None:
         encoded_match_id = lib.encoded_match_id.to_bytes(match_id)
 
         with self._cdb.begin() as txn:
             return self._decode_entry(txn.get(encoded_match_id))
+
+    def get_multi(self, match_ids: list[str]) -> list[tuple[str, bool, np.uint8]]:
+        """
+        :return: list of tuples (match_id, explored, rank) for each match that is present in the database.
+        """
+        encoded_match_ids = [lib.encoded_match_id.to_bytes(match_id) for match_id in match_ids]
+
+        with self._cdb.begin() as txn:
+            cur = txn.cursor()
+            items = cur.getmulti(encoded_match_ids)
+
+        decoded = [(lib.encoded_match_id.to_match_id(k), *self._decode_entry(v)) for k, v in items]
+        return decoded
 
     def put_multi(self, matches: list[tuple[str, bool, str, str]], overwrite=False) -> tuple[int, int]:
         """
@@ -202,6 +211,17 @@ class MatchDB:
                     return lib.encoded_match_id.to_match_id(key), rank
 
             return None
+
+    def append(self, match_id: str, ranked_score: np.uint8) -> bool:
+        """
+        Append an already explored match to the database.
+        :return: True if the match did not exist yet, or False if it did (does not overwrite!).
+        """
+        key = lib.encoded_match_id.to_bytes(match_id)
+        value = bytearray((1, ranked_score))
+
+        with self._cdb.begin(write=True) as txn:
+            return txn.put(key, value)
 
     def count(self) -> int:
         """

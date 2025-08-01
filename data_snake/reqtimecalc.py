@@ -27,9 +27,9 @@ class ReqTimeCalc:
         if satisfaction == 1:
             new_wait_time = min(self.wait_time / 2, 86400 * 5)
         else:
-            new_wait_time = int(self.wait_time + np.sqrt(self.wait_time) * (1 - satisfaction))
+            new_wait_time = self.wait_time + np.sqrt(self.wait_time) * (1 - satisfaction)
 
         # calculate the next request time
-        next_request_time = int(time()) + new_wait_time
+        next_request_time = time() + new_wait_time
 
-        return next_request_time, new_wait_time
+        return int(next_request_time), int(new_wait_time)

@@ -3,6 +3,7 @@ from time import time, sleep
 from queue import Queue
 import traceback
 
+from numpy import uint8
 import requests
 import riotwatcher as rw
 
@@ -20,9 +21,8 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
     # print database state
     print(f"{sum_db.continent}: {sum_db.count()} Summoners, {match_db.count()} Matches")
 
-    # variable for incremental explored matches,
-    # with incremental meaning between updates to state_q
-    inc_explored_matches = 0
+    # initialize the list of unexplored matches to an empty list; will be redefined every loop
+    new_match_ids = []
 
     # create matches_dir for JSON files
     matches_path = matches_path / continent / f"{int(time())}.gzip"
@@ -34,55 +34,47 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
         try:
             # break if we get the signal to stop
             if not stop_q.empty():
-                state_q.put((inc_explored_matches, (1, 0)))
+                state_q.put((len(new_match_ids), 0.))
                 break
 
-            # search for unexplored match
-            while True:
-                # query match database for an unexplored match
-                unexplored_match = match_db.unexplored_match()
-                if unexplored_match is not None:
-                    new_match_id, ranked_score = unexplored_match
-                    break
-                # if the match database does not contain any unexplored matches anymore
-                else:
-                    # request match history from an unexplored player
-                    total_matches_fetched, new_matches_fetched = fetch_player(match_db, sum_db, lolwatcher)
-                    # update explored matches
-                    state_q.put((inc_explored_matches, (total_matches_fetched, new_matches_fetched)))
-                    inc_explored_matches = 0
+            # fetch match history from a player
+            new_match_ids, ranked_score, satisfaction = fetch_player(match_db, sum_db, lolwatcher)
+            # update state thread
+            state_q.put((len(new_match_ids), satisfaction))
 
-            # request Match from RiotAPI
-            try:
-                new_match = lolwatcher.match.by_id(continent, new_match_id)
-            except rw.ApiError as e:
-                # check if this match id is invalid
-                if e.response.status_code == 404:
-                    print(f"\n[ERROR {continent}] Match {new_match_id} is invalid, skipping...\n")
-                    # mark as explored
-                    match_db.set_explored(new_match_id)
-                    continue
-                # check if the API key has become unauthorized
-                elif e.response.status_code == 401:
-                    print(f"\n[ERROR {continent}] Unauthorized API Key, exiting...\n")
-                    break
-                else:
-                    raise e
+            # explore every match
+            for match_id in new_match_ids:
+                # request Match from RiotAPI
+                try:
+                    new_match = lolwatcher.match.by_id(continent, match_id)
+                except rw.ApiError as e:
+                    # check if this match id is invalid
+                    if e.response.status_code == 404:
+                        print(f"\n[ERROR {continent}] Match {match_id} is invalid, skipping...\n")
+                        # mark as explored
+                        match_db.append(match_id, ranked_score)
+                        continue
+                    # check if the API key has become unauthorized
+                    elif e.response.status_code == 401:
+                        print(f"\n[ERROR {continent}] Unauthorized API Key, exiting...\n")
+                        break
+                    # bubble up the error if it's not recognized here
+                    else:
+                        raise e
 
-            # add match to dataset
-            dataset.append(new_match, ranked_score)
+                # add match to dataset
+                dataset.append(new_match, ranked_score)
 
-            # save match JSON
-            matches_ball.append(new_match)
+                # save match JSON
+                matches_ball.append(new_match)
 
-            # add participants to SummonerDB
-            puuids = [participant['puuid'] for participant in new_match['info']['participants']]
-            request_times = [ReqTimeCalc.initial() for _ in puuids]
-            sum_db.put_multi([(puuid, req, wait_time) for puuid, (req, wait_time) in zip(puuids, request_times)])
+                # add participants to SummonerDB
+                puuids = [participant['puuid'] for participant in new_match['info']['participants']]
+                request_times = [ReqTimeCalc.initial() for _ in puuids]
+                sum_db.put_multi([(puuid, req, wait_time) for puuid, (req, wait_time) in zip(puuids, request_times)])
 
-            # mark Match as explored
-            match_db.set_explored(new_match_id)
-            inc_explored_matches += 1
+                # save match in the match database
+                match_db.append(match_id, ranked_score)
 
         # catch the errors that just sometimes happen with web traffic.
         except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
@@ -99,13 +91,13 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
     dataset.write_match_list()
 
 
-def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatcher) -> tuple[int, int]:
+def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatcher) -> tuple[list[str], uint8, float]:
     """
-    Fetch the match history of a player, inserting new matches into the match database.
+    Fetch the match history of a player.
     Fetching the match history of a player will update the summoner's request time,
     which forbids fetching their match history again for a while (such that they can play matches).
 
-    :return: Tuple (total matches fetched, new matches found)
+    :return: Tuple (list of new match ids, ranked score of player, satisfaction (len(list of new match ids) / total number of matches in match history))
     """
 
     # search for a player whose next request time is in the past (can be fetched again)
@@ -133,6 +125,7 @@ def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatche
             return fetch_player(match_db, sum_db, lolwatcher)
 
     else:
+        # unpack unfetched summoner to puuid, request time (in the past) and the last wait time
         summoner_id, _, wait_time = unfetched_sum
 
     # get the match history of the summoner
@@ -140,29 +133,38 @@ def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatche
 
     # get the rank of the summoner
     if len(matches) > 0:
+        # fetch the (multiple) leagues for the summoner
         leagues = lolwatcher.league.by_puuid(matches[0].split('_')[0], summoner_id)
+        # only the ranked 5 vs. 5 solo/duo rank
         league = next((league for league in leagues if league['queueType'] == "RANKED_SOLO_5x5"), None)
+        # convert to uint8 ranked score
+        ranked_score = lib.encoded_rank.to_int(league['tier'], league['rank']) if league is not None else None
     else:
-        league = None
+        ranked_score = None
 
-    # insert into the match database if the summoner is ranked
-    if league is not None:
-        total, new_inserted = match_db.put_multi([(m_id, False, league['tier'], league['rank']) for m_id in matches])
+    # try to find fetched matches in the database
+    old_matches = [match_id for match_id, _, _ in match_db.get_multi(matches)]
+
+    # select only new, not yet explored, matches
+    new_matches = [match_id for match_id in matches if match_id not in old_matches]
+
+    # calculate satisfaction (the percentage of matches in the history that were not yet in the match database)
+    if ranked_score is not None:
+        satisfaction = len(new_matches) / len(matches)
     else:
         print("unranked summoner, skipping...")
-        # set new inserted to zero instead of recursing to mark this player as explored
-        total, new_inserted = 1, 0
+        satisfaction = 0.
 
-    # update summoner
-    next_time, wait_time = ReqTimeCalc(wait_time).step(new_inserted / total)
+    # update summoner next request time of the summoner in the database
+    next_time, wait_time = ReqTimeCalc(wait_time).step(satisfaction)
     sum_db.put(summoner_id, next_time, wait_time, overwrite=True)
 
-    # if we did not insert any new matches, recursively explore other players
-    if new_inserted == 0:
-        new_total, new_new_inserted = fetch_player(match_db, sum_db, lolwatcher)
-        return total + new_total, new_inserted + new_new_inserted
+    # if we did not find any new matches, recurse and fetch another player
+    if satisfaction == 0.:
+        new_matches, ranked_score, satisfaction = fetch_player(match_db, sum_db, lolwatcher)
+        return new_matches, ranked_score, satisfaction / 2  # take average of both satisfactions
 
-    return total, new_inserted
+    return new_matches, ranked_score, satisfaction
 
 
 # collect the players from the grandmaster leagues of all regions in our continent

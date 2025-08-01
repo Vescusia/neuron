@@ -10,7 +10,8 @@ import data_snake
 @click.command()
 @click.argument("api-key")
 @click.option("-c", "--continent", default="ALL", help="Continents to Scan (default: ALL)", type=click.Choice(lib.CONTINENTS + ["ALL"]))
-@click.option("--data-path", default="./data", type=click.Path(dir_okay=True, file_okay=False), help="Path to the directory within the match data will be saved. (Default: './data')")
+@click.option("--data-path", default="./data", type=click.Path(dir_okay=True, file_okay=False), help="Path to the directory within which the match data will be saved. "
+                                                                                                     "The content of this directory should not be manually managed. (Default: './data')")
 def main(api_key: str, continent: str, data_path: str) -> None:
     lolwatcher = rw.LolWatcher(api_key)
 

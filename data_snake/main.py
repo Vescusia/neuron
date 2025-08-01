@@ -68,13 +68,12 @@ def state_printer(state_q: Queue, crawlers: dict[str, Thread]) -> None:
     while True:
         # get state from Queue
         # inc_matches_explored: actual number of matches that got requested, explored and analyzed
-        # inc_match_list_entries: total number of matches in match histories of the fetched summoners
-        # inc_new_matches: number of new, unexplored matches found within the match histories
-        inc_matches_explored, (inc_match_list_entries, inc_new_matches) = state_q.get()
+        # satisfaction: number of new matches / total number of matches in player match history
+        inc_matches_explored, satisfaction = state_q.get()
 
         # increment total variables
         total_matches_explored += inc_matches_explored
-        satisfactions.append(inc_new_matches / inc_match_list_entries)
+        satisfactions.append(satisfaction)
 
         # check which continent threads are still alive
         alive_crawlers = [continent[0:2] for continent, thread in crawlers.items() if thread.is_alive()]
@@ -83,7 +82,6 @@ def state_printer(state_q: Queue, crawlers: dict[str, Thread]) -> None:
         print(
             f"[{datetime.now().strftime('%H:%M-%d.%m.%y')} | {' '.join(alive_crawlers)}] "
             f"{total_matches_explored:06} matches explored "
-            f"({total_matches_explored / (time() - start):.1f}/s), "
-            f"{np.average(satisfactions):06.2%} mean satisfaction with "
-            f"{np.std(satisfactions):05.2%} std deviation"
+            f"({total_matches_explored / (time() - start):.2f}/s), "
+            f"satisfaction: {np.average(satisfactions):06.1%} mean with {np.std(satisfactions):06.1%} std"
               )
