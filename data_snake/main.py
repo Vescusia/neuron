@@ -18,9 +18,9 @@ from lib.league_of_parquet import LolDatasetWriter
 def gather(continents: list[str], match_db_path: Path, sum_db_path: Path, matches_path: Path, dataset_path: Path,
            lolwatcher: rw.LolWatcher) -> None:
     # open database environments
-    os.makedirs(match_db_path, exist_ok=True)
+    os.makedirs(str(match_db_path), exist_ok=True)
     match_env = lmdb.open(match_db_path, map_size=1_000_000_000, max_dbs=len(continents))
-    os.makedirs(sum_db_path, exist_ok=True)
+    os.makedirs(str(sum_db_path), exist_ok=True)
     sum_env = lmdb.open(sum_db_path, map_size=2_250_000_000, max_dbs=len(continents))
 
     # print environment state
@@ -58,7 +58,7 @@ def gather(continents: list[str], match_db_path: Path, sum_db_path: Path, matche
             future.join(1)
 
 
-# Print the current state of the continent scrapers
+# Print the current state of the continent crawlers
 # Just prints out the number of total explored matches across threads
 def state_printer(state_q: Queue, crawlers: dict[str, Thread]) -> None:
     total_matches_explored = 0
