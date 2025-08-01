@@ -74,7 +74,7 @@ def state_printer(state_q: Queue, crawlers: dict[str, Thread]) -> None:
 
         # increment total variables
         total_matches_explored += inc_matches_explored
-        satisfactions.append(inc_matches_explored / inc_match_list_entries)
+        satisfactions.append(inc_new_matches / inc_match_list_entries)
 
         # check which continent threads are still alive
         alive_crawlers = [continent[0:2] for continent, thread in crawlers.items() if thread.is_alive()]
@@ -83,7 +83,7 @@ def state_printer(state_q: Queue, crawlers: dict[str, Thread]) -> None:
         print(
             f"[{datetime.now().strftime('%H:%M-%d.%m.%y')} | {' '.join(alive_crawlers)}] "
             f"{total_matches_explored:06} matches explored "
-            f"({total_matches_explored / (time() - start):.1f}/s),"
-            f"{np.mean(satisfactions):06.2%} mean satisfaction + "
-            f"{np.median(satisfactions):06.2%} std deviation"
+            f"({total_matches_explored / (time() - start):.1f}/s), "
+            f"{np.average(satisfactions):06.2%} mean satisfaction with "
+            f"{np.std(satisfactions):05.2%} std deviation"
               )

@@ -34,7 +34,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
         try:
             # break if we get the signal to stop
             if not stop_q.empty():
-                state_q.put(inc_explored_matches)
+                state_q.put((inc_explored_matches, (1, 0)))
                 break
 
             # search for unexplored match
