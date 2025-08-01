@@ -18,10 +18,10 @@ from lib.league_of_parquet import LolDatasetWriter
 def gather(continents: list[str], match_db_path: Path, sum_db_path: Path, matches_path: Path, dataset_path: Path,
            lolwatcher: rw.LolWatcher) -> None:
     # open database environments
-    os.makedirs(str(match_db_path), exist_ok=True)
-    match_env = lmdb.open(match_db_path, map_size=1_000_000_000, max_dbs=len(continents))
-    os.makedirs(str(sum_db_path), exist_ok=True)
-    sum_env = lmdb.open(sum_db_path, map_size=2_250_000_000, max_dbs=len(continents))
+    os.makedirs(match_db_path, exist_ok=True)
+    match_env = lmdb.open(str(match_db_path), map_size=1_000_000_000, max_dbs=len(continents))
+    os.makedirs(sum_db_path, exist_ok=True)
+    sum_env = lmdb.open(str(sum_db_path), map_size=2_250_000_000, max_dbs=len(continents))
 
     # print environment state
     print(f"MatchDB: {match_env.stat()['psize'] * match_env.info()['last_pgno'] / match_env.info()['map_size'] * 100:.1f} % full ({match_env.info()})")
