@@ -1,6 +1,7 @@
 import duckdb
 import pickle
 import click
+from numpy import uint8
 
 import lib
 
@@ -113,25 +114,19 @@ def all_duo_winrates(ascending: bool = False) -> dict[str: [tuple[str, float, in
 
 def team_comp_wr(team_comp: tuple[str, str, str, str, str]) -> tuple[str, str, str, str, str, float, int]:
     # encode champions
-    champ0_int = lib.encoded_champ_id.name_to_int(team_comp[0])
-    champ1_int = lib.encoded_champ_id.name_to_int(team_comp[1])
-    champ2_int = lib.encoded_champ_id.name_to_int(team_comp[2])
-    champ3_int = lib.encoded_champ_id.name_to_int(team_comp[3])
-    champ4_int = lib.encoded_champ_id.name_to_int(team_comp[4])
+    champs: list[uint8] = [lib.encoded_champ_id.name_to_int(champ) for champ in team_comp]
 
     # select all games where all were picked
-    games = duckdb.sql(f"select * from _dataset where list_contains(picks, {champ0_int}) and list_contains(picks, {champ1_int}) and list_contains(picks, {champ2_int}) and list_contains(picks, {champ3_int}) and list_contains(picks, {champ4_int})")
+    games = duckdb.sql(f"select * from _dataset where list_contains(picks, {champs[0]}) and list_contains(picks, {champs[1]}) and list_contains(picks, {champs[2]}) and list_contains(picks, {champs[3]}) and list_contains(picks, {champs[4]})")
 
     # only ones where all champions are on the same team
-    games = games.filter(f"list_contains(picks[1:5], {champ0_int}) = list_contains(picks[1:5], {champ1_int})")
-    games = games.filter(f"list_contains(picks[1:5], {champ0_int}) = list_contains(picks[1:5], {champ2_int})")
-    games = games.filter(f"list_contains(picks[1:5], {champ0_int}) = list_contains(picks[1:5], {champ3_int})")
-    games = games.filter(f"list_contains(picks[1:5], {champ0_int}) = list_contains(picks[1:5], {champ4_int})")
+    for champ in champs[1:]:
+        games = games.filter(f"list_contains(picks[1:5], {champs[0]}) = list_contains(picks[1:5], {champ})")
 
     total_games = games.count("win").fetchone()[0]
 
     # count wins
-    wins = games.filter(f"(list_contains(picks[1:5], {champ0_int}) and win) or (list_contains(picks[6:10], {champ0_int}) and not win)")
+    wins = games.filter(f"(list_contains(picks[1:5], {champs[0]}) and win) or (list_contains(picks[6:10], {champs[0]}) and not win)")
     wins = wins.count("win").fetchone()[0]
 
     # calculate losses
@@ -145,6 +140,7 @@ def team_comp_wr(team_comp: tuple[str, str, str, str, str]) -> tuple[str, str, s
 
 if __name__ == "__main__":
     print(_dataset.count_rows())
+    print(team_comp_wr(("Mordekaiser", "Viego", "Sylas", "Caitlyn", "Lux")))
 
     # champ = "Kayle"
     # alternate = "Volibear"
