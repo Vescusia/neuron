@@ -7,7 +7,7 @@ CONTINENTS = ["EUROPE", "AMERICAS", "ASIA", "SEA"]
 
 # !!! new regions may only be appended to this list !!!
 # to preserve consistency with older data instances
-REGIONS = ["EUW1", "EUN1", "RU", "TR1", "NA1", "BR1", "LA1", "LA2", "OC1", "ME1", "JP1", "KR", "TW2", "VN2"]
+REGIONS = ["EUW1", "EUN1", "RU", "TR1", "NA1", "BR1", "LA1", "LA2", "OC1", "ME1", "JP1", "KR", "TW2", "VN2", "SG2"]
 
 CONTINENTS_REGIONS_MAP = {"EUROPE": ["EUW1", "EUN1", "RU", "TR1", "ME1"], "AMERICAS": ["NA1", "BR1", "LA1", "LA2"], "ASIA": ["KR", "JP1"], "SEA": ["OC1", "TW2", "VN2", "SG2"]}
 

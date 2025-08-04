@@ -52,12 +52,8 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
                     if e.response.status_code == 404:
                         print(f"\n[ERROR {continent}] Match {match_id} is invalid, skipping...\n")
                         # mark as explored
-                        match_db.append(match_id, ranked_score)
+                        match_db.mark(match_id)
                         continue
-                    # check if the API key has become unauthorized
-                    elif e.response.status_code == 401:
-                        print(f"\n[ERROR {continent}] Unauthorized API Key, exiting...\n")
-                        break
                     # bubble up the error if it's not recognized here
                     else:
                         raise e
@@ -74,15 +70,22 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
                 sum_db.put_multi([(puuid, req, wait_time) for puuid, (req, wait_time) in zip(puuids, request_times)])
 
                 # save match in the match database
-                match_db.append(match_id, ranked_score)
+                match_db.mark(match_id)
 
         # catch the errors that just sometimes happen with web traffic.
         except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
-            print(f"\n[ERROR {continent}]:")
-            traceback.print_exception(e)
-            print("\nContinuing...")
-            sleep(5)
-            continue
+            # check if the API key has become unauthorized
+            if e.response.status_code in (401, 403):
+                print(f"\n[ERROR {continent}] Unauthorized API Key, exiting...\n")
+                break
+
+            # print traceback for logs
+            else:
+                print(f"\n[ERROR {continent}]:")
+                traceback.print_exception(e)
+                print("\nContinuing...")
+                sleep(5)
+                continue
 
     # close the matches ball
     matches_ball.close()
@@ -143,7 +146,7 @@ def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatche
         ranked_score = None
 
     # try to find fetched matches in the database
-    old_matches = [match_id for match_id, _, _ in match_db.get_multi(matches)]
+    old_matches = [match_id for match_id in match_db.filter_marked(matches)]
 
     # select only new, not yet explored, matches
     new_matches = [match_id for match_id in matches if match_id not in old_matches]

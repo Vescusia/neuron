@@ -83,5 +83,5 @@ def state_printer(state_q: Queue, crawlers: dict[str, Thread]) -> None:
             f"[{datetime.now().strftime('%H:%M-%d.%m.%y')} | {' '.join(alive_crawlers)}] "
             f"{total_matches_explored:06} matches explored "
             f"({total_matches_explored / (time() - start):.2f}/s), "
-            f"satisfaction: {np.average(satisfactions):06.1%} mean with {np.std(satisfactions):06.1%} std"
+            f"satisfaction: {np.average(satisfactions):05.1%} mean with {np.std(satisfactions):05.1%} std"
               )

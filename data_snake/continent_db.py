@@ -1,6 +1,5 @@
-from time import time, process_time
+from time import time
 
-import numpy as np
 from lmdb import Environment
 
 import lib
@@ -21,6 +20,10 @@ class ContinentDB:
         return self.env.begin(write=write, db=self.db, **kwargs)
 
     def count(self) -> int:
+        """
+        this is a pretty expensive method; try to not call often.
+        :return: number of records in this database.
+        """
         with self.begin() as txn:
             return sum(1 for _ in txn.cursor())
 
@@ -125,107 +128,55 @@ class SummonerDB:
     def __repr__(self):
         return str(self)
 
-
 class MatchDB:
     """
-    ContinentDB interface specifically for matches.
+    ContinentDB interface specifically for marking matches as explored.
 
-    This is using a legacy architecture!! It stores the 'explored' flag and the rank of the match as the value, but
-    that is not necessary anymore. This is only still supported for backwards compatibility.
+    'Mark' simply means that this lmdb database effectively only stores keys without values.
+    Only the presence of the key (match id) is relevant.
     """
 
     def __init__(self, continent_db: ContinentDB):
         self._cdb = continent_db
         self.continent = continent_db.continent
 
-    def put(self, match_id: str, explored: bool, tier: str, division: str, overwrite=False) -> bool:
+    def mark(self, match_id: str) -> bool:
         """
-        :return: True if it was written, or False to indicate the Match was already present and overwrite=False. On success, the cursor is positioned on the new record.
+        Marks the match as explored.
+
+        :return: True if the match was not marked yet, False if it was.
         """
-        key, value = self._encode_entry(match_id, explored, tier, division)
+        encoded_id = lib.encoded_match_id.to_bytes(match_id)
 
         with self._cdb.begin(write=True) as txn:
-            return txn.put(key, value, overwrite=overwrite)
+            return txn.put(encoded_id, None)
 
-    @staticmethod
-    def _encode_entry(match_id: str, explored: bool, tier: str, division: str) -> tuple[bytes, bytes]:
-        encoded_match_id = lib.encoded_match_id.to_bytes(match_id)
-        rank_int = lib.encoded_rank.to_int(tier, division)
-
-        value = bytearray((int(explored), rank_int))
-
-        return encoded_match_id, value
-
-    @staticmethod
-    def _decode_entry(value: bytes | None) -> tuple[bool, np.uint8] | None:
-        if bytes is None:
-            return None
-
-        explored = bool(value[0])
-        rank_int = np.uint8(np.frombuffer(value[1:], ">u1"))
-
-        return explored, rank_int
-
-    def get(self, match_id: str) -> tuple[bool, np.uint8] | None:
-        encoded_match_id = lib.encoded_match_id.to_bytes(match_id)
+    def is_marked(self, match_id: str) -> bool:
+        """
+        Checks if the match is marked as explored.
+        """
+        encoded_id = lib.encoded_match_id.to_bytes(match_id)
 
         with self._cdb.begin() as txn:
-            return self._decode_entry(txn.get(encoded_match_id))
+            return txn.get(encoded_id) is not None
 
-    def get_multi(self, match_ids: list[str]) -> list[tuple[str, bool, np.uint8]]:
+    def filter_marked(self, match_ids: list[str]) -> list[str]:
         """
-        :return: list of tuples (match_id, explored, rank) for each match that is present in the database.
+        Filters out unmarked matches from the given list of match ids.
+        :return: Sublist of match ids that are marked.
         """
-        encoded_match_ids = [lib.encoded_match_id.to_bytes(match_id) for match_id in match_ids]
+        encoded_ids = [lib.encoded_match_id.to_bytes(match_id) for match_id in match_ids]
 
         with self._cdb.begin() as txn:
             cur = txn.cursor()
-            items = cur.getmulti(encoded_match_ids)
+            items = cur.getmulti(encoded_ids)
 
-        decoded = [(lib.encoded_match_id.to_match_id(k), *self._decode_entry(v)) for k, v in items]
-        return decoded
-
-    def put_multi(self, matches: list[tuple[str, bool, str, str]], overwrite=False) -> tuple[int, int]:
-        """
-        :param matches: list of tuples (match_id, explored, tier, division)
-        :param overwrite: whether to overwrite existing entries or not
-        :return: a tuple (consumed, added), where consumed is the length of match_ids, and added is the number of new matches actually added to the database. added may be less than consumed when overwrite=False.
-        """
-        keys_and_values = [self._encode_entry(match_id, fetched, tier, div) for match_id, fetched, tier, div in matches]
-
-        with self._cdb.begin(write=True) as txn:
-            cur = txn.cursor()
-            return cur.putmulti(keys_and_values, overwrite=overwrite)
-
-    def unexplored_match(self) -> tuple[str, np.uint8] | None:
-        """
-        find and return a match that has not been explored yet.
-
-        :return: tuple (match_id, encoded rank) or None if no match is found.
-        """
-        with self._cdb.begin() as txn:
-            cur = txn.cursor()
-            for key, value in cur:
-                explored, rank = self._decode_entry(value)
-                if not explored:
-                    return lib.encoded_match_id.to_match_id(key), rank
-
-            return None
-
-    def append(self, match_id: str, ranked_score: np.uint8) -> bool:
-        """
-        Append an already explored match to the database.
-        :return: True if the match did not exist yet, or False if it did (does not overwrite!).
-        """
-        key = lib.encoded_match_id.to_bytes(match_id)
-        value = bytearray((1, ranked_score))
-
-        with self._cdb.begin(write=True) as txn:
-            return txn.put(key, value)
+        selected = [lib.encoded_match_id.to_match_id(k) for k, v in items]
+        return selected
 
     def count(self) -> int:
         """
-        Count the number of matches in this database.
+        Count the number of marked matches in this database.
         """
         return self._cdb.count()
 
