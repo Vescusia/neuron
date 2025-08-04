@@ -73,10 +73,7 @@ def champ_duo_winrate(champion: str, ascending: bool = False) -> {str: [(str, fl
             continue
         # get synergy winrate and save
         syn_wr, num_matches = synergy(champion, alternate)
-        duo_wr_dict[champion].append((alternate, syn_wr, num_matches))
-
-    # sort synergies in descending/ascending order
-    duo_wr_dict[champion] = sorted(duo_wr_dict[champion], key=lambda x: x[1], reverse=not ascending)
+        duo_wr_dict[alternate] = (syn_wr, num_matches)
 
     return duo_wr_dict
 
@@ -88,31 +85,34 @@ def all_duo_winrates(ascending: bool = False) -> dict[str: [tuple[str, float, in
     duo_wr_dict: dict[str, list[tuple[str, float, int]]] = {}
     champions_temp: list[str] = list(lib.CHAMPIONS.keys())
     for champion in lib.CHAMPIONS:
-        duo_wr_dict[champion] = []
+        duo_wr_dict[champion]: dict[str, tuple[float, int]] = {}
+
+    # copy champion names
+    champion_names: list[str] = list(lib.CHAMPIONS.keys())
 
     # go through all combinations and save them
     for champion in lib.CHAMPIONS:
-        for alternate in champions_temp:
-            if alternate == champion:
-                continue
+        champion_int = lib.encoded_champ_id.name_to_int(champion)
+        games = duckdb.sql(f"select * from _dataset where list_contains(picks, {champion_int})")
+
+        for alternate in champion_names:
             # get synergy winrate
             syn_wr, num_matches = synergy(champion, alternate)
 
             # save winrate
-            duo_wr_dict[champion].append((alternate, syn_wr, num_matches))
-            duo_wr_dict[alternate].append((champion, syn_wr, num_matches))
+            duo_wr_dict[champion][alternate] = (syn_wr, num_matches)
+            duo_wr_dict[alternate][champion] = (syn_wr, num_matches)
 
         # remove completed champions for efficiency
-        champions_temp.remove(champion)
-
-    # sort winrates in descending/ascending order
-    for champion in duo_wr_dict:
-        duo_wr_dict[champion] = sorted(duo_wr_dict[champion], key=lambda x: x[1], reverse=not ascending)
+        champion_names.remove(champion)
 
     return duo_wr_dict
 
 
-def team_comp_wr(team_comp: tuple[str, str, str, str, str]) -> tuple[str, str, str, str, str, float, int]:
+def team_comp_wr(team_comp: tuple[str, str, str, str, str]) -> tuple[float, int] | None:
+    """
+    Return the winrate of a team comp and number of games played, None if no games with this comp.
+    """
     # encode champions
     champs: list[uint8] = [lib.encoded_champ_id.name_to_int(champ) for champ in team_comp]
 
@@ -144,7 +144,6 @@ if __name__ == "__main__":
 
     # champ = "Kayle"
     # alternate = "Volibear"
-    #
     # bs_wr, rs_wr, total_wr, num_matches = champ_winrate(champ)
     # print(f"{champ}: blue side winrate: {bs_wr:.2%}, red side winrate: {rs_wr:.2%}, total winrate: {total_wr:.2%}, num of matches: {num_matches}")
     # bs_wr, rs_wr, total_wr, num_matches = champ_winrate(alternate)
@@ -153,10 +152,11 @@ if __name__ == "__main__":
     # print(f"{champ} + {alternate}: total winrate {syn_wr:.2%}, num of matches: {num_matches}")
     # print("\n\n")
 
-    #print(champ_duo_winrate("Kayle", False))
-    #print(all_duo_winrates(False))
+    #print(champ_duo_winrate("Kayle"))
+    print(all_duo_winrates())
+    #print(team_comp_wr(("Mordekaiser", "Viego", "Sylas", "Caitlyn", "Lux")))
 
-    # temp = all_duo_winrates(False)
+    # temp = all_duo_winrates()
     # save_file = open('all_champions_duo_wr_pickle.db', 'wb')
     # pickle.dump(temp, save_file)
     # save_file.close()
