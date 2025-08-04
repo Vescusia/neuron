@@ -1,5 +1,7 @@
-import duckdb
 import pickle
+import time
+
+import duckdb
 import click
 from numpy import uint8
 
@@ -38,13 +40,21 @@ def champ_winrate(champ: str) -> (float, float, float, int):
     return bs_wins / (bs_wins + bs_losses), rs_wins / (rs_wins + rs_losses), (bs_wins + rs_wins) / total_games, total_games
 
 
-def synergy(champ0: str, champ1: str) -> (float, int):
+def synergy(champ0: str, champ1: str, games: duckdb.DuckDBPyRelation | None = None) -> (float, int):
+    """
+    :returns: tuple (synergy winrate, num of matches)
+    """
+    start = time.time()
     # encode champions
     champ0_int = lib.encoded_champ_id.name_to_int(champ0)
     champ1_int = lib.encoded_champ_id.name_to_int(champ1)
 
-    # select all games where both were picked
-    games = duckdb.sql(f"select * from _dataset where list_contains(picks, {champ0_int}) and list_contains(picks, {champ1_int})")
+    if games is None:
+        # select all games where both were picked
+        games = duckdb.sql(f"select * from _dataset where list_contains(picks, {champ0_int}) and list_contains(picks, {champ1_int})")
+    else:
+        games = games.filter(f"list_contains(picks, {champ1_int})")
+
     # only ones where both champions are on the same team
     games = games.filter(f"list_contains(picks[1:5], {champ0_int}) = list_contains(picks[1:5], {champ1_int})")
     # count all entries in win column (looses and wins)
@@ -57,33 +67,32 @@ def synergy(champ0: str, champ1: str) -> (float, int):
     # calculate losses
     losses = total_games - wins
 
-    print(f"{champ0} + {champ1}: total winrate {wins / (wins + losses):.2%}, num of matches: {total_games}")
+    print(time.time() - start)
     return wins / (wins + losses), total_games
 
-def champ_duo_winrate(champion: str, ascending: bool = False) -> {str: [(str, float, int)]}:
+
+def champ_duo_winrate(champion: str) -> dict[str, tuple[float, int]]:
     """
-    This function returns a dictionary for the given champion and a list of all synergy combinations for each champion.
+    This function returns a dictionary {other champion: (winrate, num of matches)}.
     """
     # initialize dictionary
-    duo_wr_dict = {champion: []}
+    duo_wr_dict = {}
 
     # loop all champions
     for alternate in lib.CHAMPIONS:
-        if alternate == champion:
-            continue
         # get synergy winrate and save
         syn_wr, num_matches = synergy(champion, alternate)
         duo_wr_dict[alternate] = (syn_wr, num_matches)
 
     return duo_wr_dict
 
-def all_duo_winrates(ascending: bool = False) -> dict[str: [tuple[str, float, int]]]:
+
+def all_duo_winrates() -> dict[str: dict[str, tuple[float, int]]]:
     """
-    This function returns a dictionary of all champions and a list of all synergy combinations for each champion.
+    This function returns a dictionary {champ0: {champ1: (winrate, num of matches)}}.
     """
     # initialize dictionary
-    duo_wr_dict: dict[str, list[tuple[str, float, int]]] = {}
-    champions_temp: list[str] = list(lib.CHAMPIONS.keys())
+    duo_wr_dict: dict[str, dict[str, tuple[float, int]]] = {}
     for champion in lib.CHAMPIONS:
         duo_wr_dict[champion]: dict[str, tuple[float, int]] = {}
 
@@ -97,7 +106,7 @@ def all_duo_winrates(ascending: bool = False) -> dict[str: [tuple[str, float, in
 
         for alternate in champion_names:
             # get synergy winrate
-            syn_wr, num_matches = synergy(champion, alternate)
+            syn_wr, num_matches = synergy(champion, alternate, games=games)
 
             # save winrate
             duo_wr_dict[champion][alternate] = (syn_wr, num_matches)
@@ -132,15 +141,14 @@ def team_comp_wr(team_comp: tuple[str, str, str, str, str]) -> tuple[float, int]
     # calculate losses
     losses = total_games - wins
 
-    if total_games > 0:
-        return wins / (wins + losses), total_games
-    else:
-        return 0, total_games
+    if total_games == 0:
+        return None
+
+    return wins / (wins + losses), total_games
 
 
 if __name__ == "__main__":
-    print(_dataset.count_rows())
-    print(team_comp_wr(("Mordekaiser", "Viego", "Sylas", "Caitlyn", "Lux")))
+    print(f"{_dataset.count_rows()} Matches in the Dataset")
 
     # champ = "Kayle"
     # alternate = "Volibear"
