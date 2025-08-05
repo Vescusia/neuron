@@ -75,7 +75,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
         # catch the errors that just sometimes happen with web traffic.
         except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
             # check if the API key has become unauthorized
-            if e.response.status_code in (401, 403):
+            if type(e) is requests.exceptions.HTTPError and e.response.status_code in (401, 403):
                 print(f"\n[ERROR {continent}] Unauthorized API Key, exiting...\n")
                 break
 
@@ -134,14 +134,27 @@ def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatche
     # get the match history of the summoner
     matches = lolwatcher.match.matchlist_by_puuid(match_db.continent, summoner_id, count=100, type="ranked", queue=420)
 
-    # get the rank of the summoner
-    if len(matches) > 0:
+    # determine the rank of the summoner
+    for match in matches:
+        # guess most played/highest ranked region by the latest match
+        region = match.split('_')[0]
+        if region in lib.DEPRECATED_REGIONS:
+            ranked_score = None
+            break
+
         # fetch the (multiple) leagues for the summoner
-        leagues = lolwatcher.league.by_puuid(matches[0].split('_')[0], summoner_id)
+        leagues = lolwatcher.league.by_puuid(region, summoner_id)
+
         # only the ranked 5 vs. 5 solo/duo rank
         league = next((league for league in leagues if league['queueType'] == "RANKED_SOLO_5x5"), None)
+        if league is None:
+            ranked_score = None
+            break
+
         # convert to uint8 ranked score
-        ranked_score = lib.encoded_rank.to_int(league['tier'], league['rank']) if league is not None else None
+        ranked_score = lib.encoded_rank.to_int(league['tier'], league['rank'])
+        break
+
     else:
         ranked_score = None
 
@@ -175,6 +188,9 @@ def fetch_players_from_league(continent: str, lolwatcher: rw.LolWatcher) -> list
     # find regions in our continent
     puuids = []
     for region in lib.CONTINENTS_REGIONS_MAP[continent]:
+        if region in lib.DEPRECATED_REGIONS:
+            continue
+
         print("Getting Players of Challenger League for", region)
 
         # request challenger league
