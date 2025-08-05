@@ -1,9 +1,12 @@
 import pickle
 import time
+from copy import copy
 
 import duckdb
-import click
+import pyarrow
 from numpy import uint8
+import click
+from tqdm import tqdm
 
 import lib
 
@@ -11,10 +14,35 @@ import lib
 # open LoL dataset
 _dataset = lib.league_of_parquet.open_dataset('./data/dataset')
 
+# calculate maximum length of champion names
+_max_champ_name_len = max([len(champion) for champion in lib.CHAMPIONS.keys()])
 
-def champ_winrate(champ: str) -> (float, float, float, int):
+
+@click.group()
+@click.option("--dataset-path", type=click.Path(dir_okay=True, file_okay=False), default="./data/dataset")
+def cli(dataset_path: str) -> None:
     """
-    :return: tuple (blue side winrate, red side winrate, total winrate, num of matches)
+    Statistic analysis tool for the dataset.
+    """
+    global _dataset
+    _dataset = lib.league_of_parquet.open_dataset(dataset_path)
+
+    print(f"Total number of matches in the dataset: {_dataset.count_rows()}")
+
+
+@cli.command("winrate")
+@click.argument("champion", type=click.Choice(lib.CHAMPIONS))
+def cli_champ_winrate(champion: str):
+    """
+    Look up the winrate of a specific champion.
+    Will return blue side, red side and total winrate as well as number of games played.
+    """
+    bs_winrate, rs_winrate, total_winrate, total_games = champ_winrate(champion)
+    print(f"{champion}: blue side winrate of {bs_winrate:.2%}, red side winrate of {rs_winrate:.2%}, total winrate of {total_winrate:.2%} with {total_games} matches")
+
+def champ_winrate(champ: str) -> tuple[float, float, float, int]:
+    """
+    :return: tuple (blue side winrate, red side winrate, total winrate, number of games played)
     """
     # encode champion to int
     champ_int = lib.encoded_champ_id.name_to_int(champ)
@@ -37,49 +65,86 @@ def champ_winrate(champ: str) -> (float, float, float, int):
     rs_wins = rs_games.filter("not win").count("win").fetchone()[0]
     rs_losses = rs_games.filter("win").count("win").fetchone()[0]
 
-    return bs_wins / (bs_wins + bs_losses), rs_wins / (rs_wins + rs_losses), (bs_wins + rs_wins) / total_games, total_games
+    # calculate winrates
+    bs_winrate = bs_wins / (bs_wins + bs_losses)
+    rs_winrate = rs_wins / (rs_wins + rs_losses)
+    total_winrate = (bs_wins + rs_wins) / total_games
+
+    return bs_winrate, rs_winrate, total_winrate, total_games
 
 
-def synergy(champ0: str, champ1: str, games: duckdb.DuckDBPyRelation | None = None) -> (float, int):
+@cli.command("synergy")
+@click.argument("champions", nargs = 2, type=click.Choice(lib.CHAMPIONS))
+def cli_synergy(champions: tuple[str, str]):
     """
-    :returns: tuple (synergy winrate, num of matches)
+    Look up the winrate of a synergy between two champions within the same team.
+    Will return the winrate of the synergy as well as the number of games played.
     """
-    start = time.time()
+    synergy_winrate, total_games = synergy(champions[0], champions[1])
+    print(f"{champions[0]} and {champions[1]} have a total winrate of {synergy_winrate:.2%} with {total_games} matches.")
+
+
+def synergy(champ0: str, champ1: str, preselected0: pyarrow.Table = None, preselected1: pyarrow.Table = None) -> tuple[float, int]:
+    """
+    :return: tuple (winrate, number of games played)
+    """
     # encode champions
     champ0_int = lib.encoded_champ_id.name_to_int(champ0)
     champ1_int = lib.encoded_champ_id.name_to_int(champ1)
 
-    if games is None:
-        # select all games where both were picked
+    # select all games where both were picked
+    if preselected0 is None:
         games = duckdb.sql(f"select * from _dataset where list_contains(picks, {champ0_int}) and list_contains(picks, {champ1_int})")
     else:
-        games = games.filter(f"list_contains(picks, {champ1_int})")
+        assert preselected1 is not None
+        games = duckdb.sql(f"select * from preselected0 where list_contains(picks, {champ1_int}) union select * from preselected1 where list_contains(picks, {champ0_int})")
 
     # only ones where both champions are on the same team
     games = games.filter(f"list_contains(picks[1:5], {champ0_int}) = list_contains(picks[1:5], {champ1_int})")
-    # count all entries in win column (looses and wins)
+    # count all entries in win column (losses and wins)
     total_games = games.count("win").fetchone()[0]
 
-    # count wins
+    # count wins and losses
     wins = games.filter(f"(list_contains(picks[1:5], {champ0_int}) and win) or (list_contains(picks[6:10], {champ0_int}) and not win)")
     wins = wins.count("win").fetchone()[0]
-
-    # calculate losses
     losses = total_games - wins
 
-    print(time.time() - start)
-    return wins / (wins + losses), total_games
+    # calculate winrate
+    synergy_winrate = wins / (wins + losses)
+
+    return synergy_winrate, total_games
 
 
-def champ_duo_winrate(champion: str) -> dict[str, tuple[float, int]]:
+@cli.command("all-champ-synergies")
+@click.argument("champion", type=click.Choice(lib.CHAMPIONS))
+def cli_all_champ_synergies(champion: str):
     """
-    This function returns a dictionary {other champion: (winrate, num of matches)}.
+    Look up all synergies for a champion.
+    """
+    print("Calculating synergies for all champions... This may take a while.")
+    synergies = all_champ_synergies(champion)
+
+    # sort synergies in descending order
+    sorted_synergies = sorted(synergies.items(), key=lambda x: x[1][0], reverse=True)
+
+    # print output
+    print(f"Synergies with {champion}:")
+    for alternate, (winrate, total_games) in sorted_synergies:
+        print(f"{alternate:{_max_champ_name_len}} winrate of {winrate:.2%}, {total_games:5} matches")
+
+
+def all_champ_synergies(champion: str, log_output: bool = True) -> dict[str, tuple[float, int]]:
+    """
+    :return: dict (alternate: (winrate, num of matches))
     """
     # initialize dictionary
     duo_wr_dict = {}
 
+    # get the list of champions
+    champions = copy(lib.CHAMPIONS) if log_output is False else tqdm(copy(lib.CHAMPIONS))
+
     # loop all champions
-    for alternate in lib.CHAMPIONS:
+    for alternate in champions:
         # get synergy winrate and save
         syn_wr, num_matches = synergy(champion, alternate)
         duo_wr_dict[alternate] = (syn_wr, num_matches)
@@ -87,7 +152,17 @@ def champ_duo_winrate(champion: str) -> dict[str, tuple[float, int]]:
     return duo_wr_dict
 
 
-def all_duo_winrates() -> dict[str: dict[str, tuple[float, int]]]:
+@cli.command("all-set-synergies")
+@click.option("--output-path", type=click.Path(dir_okay=False, file_okay=True), default="./all_set_synergies.txt", help="Default: './all_set_synergies.txt'")
+def cli_all_set_synergies(output_path: str):
+    """
+    Computes all possibles synergies (every champion with every other champion) for the whole dataset.
+    This will write the output to a text file.
+    Warning: slow!
+    """
+    all_set_synergies(output_path=output_path)
+
+def all_set_synergies(output_path: str = None) -> dict[str: dict[str, tuple[float, int]]]:
     """
     This function returns a dictionary {champ0: {champ1: (winrate, num of matches)}}.
     """
@@ -96,26 +171,72 @@ def all_duo_winrates() -> dict[str: dict[str, tuple[float, int]]]:
     for champion in lib.CHAMPIONS:
         duo_wr_dict[champion]: dict[str, tuple[float, int]] = {}
 
-    # copy champion names
-    champion_names: list[str] = list(lib.CHAMPIONS.keys())
+    # clone champions to only compute n^2 / 2
+    alternates = list(lib.CHAMPIONS.keys())
 
-    # go through all combinations and save them
-    for champion in lib.CHAMPIONS:
-        champion_int = lib.encoded_champ_id.name_to_int(champion)
-        games = duckdb.sql(f"select * from _dataset where list_contains(picks, {champion_int})")
+    # add progress bar
+    if output_path:
+        print("Preselecting champion specific tables...")
+    champions = copy(alternates) if not output_path else tqdm(copy(alternates))
 
-        for alternate in champion_names:
+    # preselect champion specific tables
+    champ_tables: dict[str, pyarrow.Table] = {}
+    for champion in copy(champions):
+        champ_tables[champion] = duckdb.sql(f"select * from _dataset where list_contains(picks, {lib.encoded_champ_id.name_to_int(champion)})").arrow()
+
+    if output_path:
+        print("Computing synergies...")
+
+    # calculate all synergies within the dataset
+    for champion in copy(champions):
+        for alternate in alternates:
             # get synergy winrate
-            syn_wr, num_matches = synergy(champion, alternate, games=games)
+            syn_wr, num_matches = synergy(champion, alternate, preselected0=champ_tables[champion], preselected1=champ_tables[alternate])
 
             # save winrate
             duo_wr_dict[champion][alternate] = (syn_wr, num_matches)
             duo_wr_dict[alternate][champion] = (syn_wr, num_matches)
 
         # remove completed champions for efficiency
-        champion_names.remove(champion)
+        alternates.remove(champion)
+
+    # write output to a text file if wanted
+    if output_path:
+        print(f"Saving synergies to {output_path}")
+        with open(output_path, "w") as f:
+            print(f"{_dataset.count_rows()} total number of matches in the dataset\n", file=f)
+            for champion, winrates in duo_wr_dict.items():
+                print("#", champion, file=f)
+                print(" " * (4 + _max_champ_name_len), " win%   matches", file=f)
+
+                # sort by winrate in descending order
+                winrates = sorted(winrates.items(), key=lambda x: x[1][0], reverse=True)
+
+                # print winrate for this synergy
+                for alternate, (winrate, num_matches) in winrates:
+                    print(f"    {alternate:{_max_champ_name_len}} {winrate:06.2%}  {num_matches:>5}", file=f)
+                    
+                print("\n", file=f)
+        print("Done.")
 
     return duo_wr_dict
+
+@cli.command("team-comp-wr")
+@click.argument("champions", nargs = 5, type=click.Choice(lib.CHAMPIONS))
+def cli_team_comp_wr(champions: tuple[str, str, str, str, str]):
+    """
+    Calculate the winrate of a specific team comp.
+    """
+    # calculate team comp winrate
+    team_comp_winrate = team_comp_wr(champions)
+
+    # print output
+    if team_comp_winrate is None:
+        print("No games with this team comp found. :(")
+    else:
+        winrate, num_games = team_comp_winrate
+        print(f"The team consists of: {champions[0]}, {champions[1]}, {champions[2]}, {champions[3]} and {champions[4]}.")
+        print(f"This team has a winrate of {winrate:.2%} with {num_games} games played. Don't be disappointed.")
 
 
 def team_comp_wr(team_comp: tuple[str, str, str, str, str]) -> tuple[float, int] | None:
@@ -148,29 +269,5 @@ def team_comp_wr(team_comp: tuple[str, str, str, str, str]) -> tuple[float, int]
 
 
 if __name__ == "__main__":
-    print(f"{_dataset.count_rows()} Matches in the Dataset")
-
-    # champ = "Kayle"
-    # alternate = "Volibear"
-    # bs_wr, rs_wr, total_wr, num_matches = champ_winrate(champ)
-    # print(f"{champ}: blue side winrate: {bs_wr:.2%}, red side winrate: {rs_wr:.2%}, total winrate: {total_wr:.2%}, num of matches: {num_matches}")
-    # bs_wr, rs_wr, total_wr, num_matches = champ_winrate(alternate)
-    # print(f"{alternate}: blue side winrate: {bs_wr:.2%}, red side winrate: {rs_wr:.2%}, total winrate: {total_wr:.2%}, num of matches: {num_matches}")
-    # syn_wr, num_matches = synergy(champ, alternate)
-    # print(f"{champ} + {alternate}: total winrate {syn_wr:.2%}, num of matches: {num_matches}")
-    # print("\n\n")
-
-    #print(champ_duo_winrate("Kayle"))
-    print(all_duo_winrates())
-    #print(team_comp_wr(("Mordekaiser", "Viego", "Sylas", "Caitlyn", "Lux")))
-
-    # temp = all_duo_winrates()
-    # save_file = open('all_champions_duo_wr_pickle.db', 'wb')
-    # pickle.dump(temp, save_file)
-    # save_file.close()
-
-    # for champ in temp:
-    #     print("Synergies with: ", champ)
-    #     for alternate in temp[champ]:
-    #         print(alternate)
+    cli()
 
