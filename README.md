@@ -8,35 +8,74 @@ but out of pure interest and curiosity.
 Our highest priority has draft analysis. Although, things like items, runes, jungle routes, etc. may come later. 
 
 ## Goals
-* Gather match data independently and locally 
-* Statistically analyze meta- and patch independent synergies between champions
-* Predict winning teams in draft phase using ML, while respecting model confidence
-* Estimate ideal picks, bans and comps in draft phase using ML 
+* [x] Gather match data independently and locally 
+* [x] Statistically analyze
+  * [x] Winrates of single champions
+  * [x] Winrates of synergies between two champions on the same team
+  * [x] Winrates of full team comps
+* [ ] Use Machine Learning to predict
+  * [ ] Winning team from draft
+  * [ ] Ideal picks in draft
+  * [ ] Ideal comps in draft
+
+## Installation
+Make sure you have python 3.13 installed.
+This is assuming linux with bash, exact procedure will vary on your system.
+
+clone the repository and cd into it: 
+
+``git clone https://github.com/Vescusia/neuron.git && cd neuron``
+
+setup the virtual environment: 
+
+``python3.13 -m venv .venv``
+
+and source it: 
+
+``source .venv/bin/activate``
+
+finally, install the dependencies: 
+
+``pip install riotwatcher lmdb click numpy pyarrow duckdb tqdm``
 
 ## Usage
 ### Gathering Data
-Right now, gathering match data is the only feature Neuron actually supports.
+Neuron is a data analysis tool. However, before we can analyze data, we need data.
 
 Running
-```python3 ./data_snake.py <YOUR_API_KEY> --continent EUROPE```
+
+``python3 ./match_crawler.py <YOUR_API_KEY> --continent EUROPE``
+
 will start gathering ranked 5v5 matches from all regions and ranks in Europe (EUW, EUN...).
+The data will be saved (by default) in './data'.
 
-## Architecture
-### Gathering Data
-Neuron's data gathering implementation can easily saturate the rate limits of Riot's development/personal API keys.  
-It also respects the fact that every continent has its own rate limit and will saturate them in parallel. 
+Every match JSON will be saved as gzip compressed balls (in 'data/matches').
 
-It is, however, not optimized for any potential faster rate limit (than 100 requests every 2 minutes).
+Additionally, certain match features (Patch, Rank, Picked Champions, Bans, Win/Loss)
+will be saved as parquet datasets (in 'data/dataset') for fast access.
 
-### Data Format
-**Every** match JSON will be saved within the 'matches' path (default: './matches') as LZMA compressed balls.
-Each instance of data snake will create one match ball per continent, 
-with the name format being `<timestamp>_<number_of_contained_matches>.xz`. 
-Each ball may only contain up to 36,000 matches (roughly half a day) and will split itself if it reaches that amount.
-Decompress these files to access the raw match JSON.
+### Analysis
+Calculating the winrate for a single champion (for example, Fiora) can be done like this:
 
-Additionally, certain match features (Patch, Rank, Picked Champions, Bans, Win/Loss) (This selection may change at any time!)
-will be saved in a PyArrow dataset for quick, easy access.
+``python3 ./stat_analysis.py winrate Fiora``
+
+Calculating the winrate of a synergy, meaning two champions on the same team, is similar:
+
+``python3 ./stat_analysis.py synergy Fiora Twitch``
+
+For easy of use, one can calculate all possible synergies of a champion with one command:
+
+``python3 ./stat_analysis.py all-champ-synergies Fiora``
+
+And, even more so, one can calculate **every** possible synergy: 
+
+``pytohn3 ./stat_analysis.py all-set-synergies``
+
+An exemplary output of this command can be seen in [all_synergies.txt](all_synergies.txt).
+Especially interesting about the synergies is the fact that they are not constrained to specific role combinations. 
+On typical statistics websites, synergies of, say, bot laners would be supports.
+Yet in this dataset, one of the best synergies of, for example, KogMaw is... Malzahar. 
+Similarly interesting and unique relationships can be found all over the dataset and are the main motivation for this project.
 
 ## Dependencies
 Currently, Neuron depends on
@@ -46,3 +85,4 @@ Currently, Neuron depends on
 * numpy
 * [pyarrow](https://arrow.apache.org/docs/python/index.html) for fast columnar data storage
 * [duckdb](https://duckdb.org) for easy SQL querying of different data formats
+* [tqdm](https://pypi.org/project/tqdm/), a progress bar library
