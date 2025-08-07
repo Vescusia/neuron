@@ -128,6 +128,7 @@ class SummonerDB:
     def __repr__(self):
         return str(self)
 
+
 class MatchDB:
     """
     ContinentDB interface specifically for marking matches as explored.

@@ -21,9 +21,6 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
     # print database state
     print(f"{sum_db.continent}: {sum_db.count()} Summoners, {match_db.count()} Matches")
 
-    # initialize the list of unexplored matches to an empty list; will be redefined every loop
-    new_match_ids = []
-
     # create matches_dir for JSON files
     matches_path = matches_path / continent / f"{int(time())}.gzip"
     matches_path.parent.mkdir(parents=True, exist_ok=True)
@@ -34,7 +31,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
         try:
             # break if we get the signal to stop
             if not stop_q.empty():
-                state_q.put((len(new_match_ids), 0.))
+                state_q.put((0, 0.))
                 break
 
             # fetch match history from a player

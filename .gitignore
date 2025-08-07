@@ -1,3 +1,7 @@
 /data
 /.idea
 /data_snake/__pycache__
+/lib/__pycache__
+/logs
+/backups
+/all_set_synergies.txt

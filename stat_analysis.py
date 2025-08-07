@@ -11,7 +11,7 @@ from tqdm import tqdm
 import lib
 
 # open LoL dataset
-_dataset = lib.league_of_parquet.open_dataset('./data/dataset')
+_dataset = None
 
 # calculate maximum length of champion names
 _max_champ_name_len = max([len(champion) for champion in lib.CHAMPIONS.keys()])
