@@ -14,7 +14,7 @@ from .compressed_json_ball import CompressedJSONBall
 from .reqtimecalc import ReqTimeCalc
 
 
-def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, dataset: ContinentDatasetWriter, lolwatcher: rw.LolWatcher) -> None:
+def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, ds_writer: ContinentDatasetWriter, lolwatcher: rw.LolWatcher) -> None:
     # define the continent we are crawling by copying the one from the continent-specific match database
     continent = match_db.continent
 
@@ -59,7 +59,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
                         raise e
 
                 # add match to dataset
-                dataset.append(new_match, ranked_score)
+                ds_writer.append(new_match, ranked_score)
 
                 # save match JSON
                 matches_ball.append(new_match)
@@ -90,8 +90,8 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
     # close the matches ball
     matches_ball.close()
 
-    # write matches between intervals to dataset
-    dataset.write_match_list()
+    # close dataset writer
+    ds_writer.close(redistribute=36_000)
 
 
 def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatcher) -> tuple[list[str], uint8, float]:
