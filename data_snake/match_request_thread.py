@@ -27,68 +27,70 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
     # open lzma compressed JSON ball
     matches_ball = CompressedJSONBall(matches_path, split_every=36_000)
 
-    while True:
-        try:
-            # break if we get the signal to stop
-            if not stop_q.empty():
-                state_q.put((0, 0.))
-                break
+    try:
+        while True:
+            try:
+                # break if we get the signal to stop
+                if not stop_q.empty():
+                    state_q.put((0, 0.))
+                    break
 
-            # fetch match history from a player
-            new_match_ids, ranked_score, satisfaction = fetch_player(match_db, sum_db, lolwatcher)
-            # update state thread
-            state_q.put((len(new_match_ids), satisfaction))
+                # fetch match history from a player
+                new_match_ids, ranked_score, satisfaction = fetch_player(match_db, sum_db, lolwatcher)
+                # update state thread
+                state_q.put((len(new_match_ids), satisfaction))
 
-            # explore every match
-            for match_id in new_match_ids:
-                # request Match from RiotAPI
-                try:
-                    new_match = lolwatcher.match.by_id(continent, match_id)
-                except rw.ApiError as e:
-                    # check if this match id is invalid
-                    if e.response.status_code == 404:
-                        print(f"\n[ERROR {continent}] Match {match_id} is invalid, skipping...\n")
-                        # mark as explored
-                        match_db.mark(match_id)
-                        continue
-                    # bubble up the error if it's not recognized here
-                    else:
-                        raise e
+                # explore every match
+                for match_id in new_match_ids:
+                    # request Match from RiotAPI
+                    try:
+                        new_match = lolwatcher.match.by_id(continent, match_id)
+                    except rw.ApiError as e:
+                        # check if this match id is invalid
+                        if e.response.status_code == 404:
+                            print(f"\n[ERROR {continent}] Match {match_id} is invalid, skipping...\n")
+                            # mark as explored
+                            match_db.mark(match_id)
+                            continue
+                        # bubble up the error if it's not recognized here
+                        else:
+                            raise e
 
-                # add match to dataset
-                ds_writer.append(new_match, ranked_score)
+                    # add match to dataset
+                    ds_writer.append(new_match, ranked_score)
 
-                # save match JSON
-                matches_ball.append(new_match)
+                    # save match JSON
+                    matches_ball.append(new_match)
 
-                # add participants to SummonerDB
-                puuids = [participant['puuid'] for participant in new_match['info']['participants']]
-                request_times = [ReqTimeCalc.initial() for _ in puuids]
-                sum_db.put_multi([(puuid, req, wait_time) for puuid, (req, wait_time) in zip(puuids, request_times)])
+                    # add participants to SummonerDB
+                    puuids = [participant['puuid'] for participant in new_match['info']['participants']]
+                    request_times = [ReqTimeCalc.initial() for _ in puuids]
+                    sum_db.put_multi([(puuid, req, wait_time) for puuid, (req, wait_time) in zip(puuids, request_times)])
 
-                # save match in the match database
-                match_db.mark(match_id)
+                    # save match in the match database
+                    match_db.mark(match_id)
 
-        # catch the errors that just sometimes happen with web traffic.
-        except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
-            # check if the API key has become unauthorized
-            if type(e) is requests.exceptions.HTTPError and e.response.status_code in (401, 403):
-                print(f"\n[ERROR {continent}] Unauthorized API Key, exiting...\n")
-                break
+            # catch the errors that just sometimes happen with web traffic.
+            except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
+                # check if the API key has become unauthorized
+                if type(e) is requests.exceptions.HTTPError and e.response.status_code in (401, 403):
+                    print(f"\n[ERROR {continent}] Unauthorized API Key, exiting...\n")
+                    break
 
-            # print traceback for logs
-            else:
-                print(f"\n[ERROR {continent}]:")
-                traceback.print_exception(e)
-                print("\nContinuing...")
-                sleep(5)
-                continue
+                # print traceback for logs
+                else:
+                    print(f"\n[ERROR {continent}]:")
+                    traceback.print_exception(e)
+                    print("\nContinuing...")
+                    sleep(5)
+                    continue
 
-    # close the matches ball
-    matches_ball.close()
+    finally:
+        # close the matches ball
+        matches_ball.close()
 
-    # close dataset writer
-    ds_writer.close(redistribute=36_000)
+        # close dataset writer
+        ds_writer.close(redistribute=36_000)
 
 
 def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatcher) -> tuple[list[str], uint8, float]:
