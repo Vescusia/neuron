@@ -91,22 +91,31 @@ def cli_synergy(champions: tuple[str, str]):
             f"{champions[0]} and {champions[1]} have a total winrate of {synergy_winrate:.2%} with {total_games} matches.")
 
 
-def synergy(champ0: str, champ1: str, preselected0: pyarrow.Table = None, preselected1: pyarrow.Table = None) -> tuple[float, int] | None:
+def synergy(champ0: str, champ1: str) -> tuple[float, int] | None:
     """
     :return: tuple (winrate, number of games played)
     """
+    # memoize champion specific dataset subsets
+    try:
+        synergy.preselected
+    except AttributeError:
+        synergy.preselected = {k: None for k in lib.CHAMPIONS.keys()}
+
     # encode champions
     champ0_int = lib.encoded_champ_id.name_to_int(champ0)
     champ1_int = lib.encoded_champ_id.name_to_int(champ1)
 
+    # ensure that champ0 and champ1 have been preselected
+    for champ, champ_int in zip((champ0, champ1), (champ0_int, champ1_int)):
+        if synergy.preselected[champ] is None:
+            synergy.preselected[champ] = duckdb.sql(
+                f"select * from _dataset where list_contains(picks, {champ_int})").arrow()
+
     # select all games where both were picked
-    if preselected0 is None:
-        games = duckdb.sql(
-            f"select * from _dataset where list_contains(picks, {champ0_int}) and list_contains(picks, {champ1_int})")
-    else:
-        assert preselected1 is not None
-        games = duckdb.sql(
-            f"select * from preselected0 where list_contains(picks, {champ1_int}) union select * from preselected1 where list_contains(picks, {champ0_int})")
+    preselected0 = synergy.preselected[champ0]
+    preselected1 = synergy.preselected[champ1]
+    games = duckdb.sql(
+        f"select * from preselected0 where list_contains(picks, {champ1_int}) union select * from preselected1 where list_contains(picks, {champ0_int})")
 
     # only ones where both champions are on the same team
     games = games.filter(f"list_contains(picks[1:5], {champ0_int}) = list_contains(picks[1:5], {champ1_int})")
@@ -185,6 +194,7 @@ def cli_all_set_synergies(output_path: str, pickle_output: bool):
     if pickle_output:
         with open(output_path.with_suffix(".pkl"), "wb") as f:
             pickle.dump(output, f)
+        print("Pickled saved to output to", output_path.with_suffix(".pkl"))
 
 
 def all_set_synergies(output_path: Path = None) -> dict[str, dict[str, tuple[float, int]]]:
@@ -201,23 +211,14 @@ def all_set_synergies(output_path: Path = None) -> dict[str, dict[str, tuple[flo
 
     # add progress bar
     if output_path:
-        print("Preselecting champion specific tables...")
-    champions = copy(alternates) if not output_path else tqdm(copy(alternates))
-
-    # preselect champion specific tables
-    champ_tables: dict[str, pyarrow.Table] = {}
-    for champion in copy(champions):
-        champ_tables[champion] = duckdb.sql(
-            f"select * from _dataset where list_contains(picks, {lib.encoded_champ_id.name_to_int(champion)})").arrow()
-
-    if output_path:
         print("Computing synergies...")
+    champions = copy(alternates) if not output_path else tqdm(copy(alternates))
 
     # calculate all synergies within the dataset
     for champion in champions:
         for alternate in alternates:
             # get synergy winrate
-            synergy_result = synergy(champion, alternate, preselected0=champ_tables[champion], preselected1=champ_tables[alternate])
+            synergy_result = synergy(champion, alternate)
 
             # store winrate in dict
             duo_wr_dict[champion][alternate] = synergy_result
