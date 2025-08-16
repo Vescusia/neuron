@@ -170,7 +170,7 @@ def all_champ_synergies(champion: str, log_output: bool = True) -> dict[str, tup
 @cli.command("all-set-synergies")
 @click.option("--output-path", type=click.Path(dir_okay=False, file_okay=True), default="./all_set_synergies.txt",
               help="Default: './all_set_synergies.txt'")
-@click.flag("--pickle-output", is_flag=True, help="Also pickle the output (dict[str, dict[str, tuple[float, int]]]). Will write to the output path with a .pkl extension.", default=False)
+@click.option("--pickle-output", is_flag=True, help="Also pickle the output (dict[str, dict[str, tuple[float, int]]]). Will write to the output path with a .pkl extension.", default=False)
 def cli_all_set_synergies(output_path: str, pickle_output: bool):
     """
     Calculate all possibles synergies (every champion with every other champion) in the whole dataset.
