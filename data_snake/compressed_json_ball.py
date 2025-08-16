@@ -57,4 +57,4 @@ class CompressedJSONBall:
 
         # rename the current file to indicate split
         if self.split_every is not None:
-            self.path = self.path.rename(self.path.with_stem(f"{self._splits}_{self.path.stem}"))
+            self.path = self.path.rename(self.path.with_stem(f"{self.path.stem}-{self._splits}"))

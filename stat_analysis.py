@@ -1,6 +1,6 @@
 import pickle
-import time
 from copy import copy
+from pathlib import Path
 
 import duckdb
 import pyarrow
@@ -170,17 +170,24 @@ def all_champ_synergies(champion: str, log_output: bool = True) -> dict[str, tup
 @cli.command("all-set-synergies")
 @click.option("--output-path", type=click.Path(dir_okay=False, file_okay=True), default="./all_set_synergies.txt",
               help="Default: './all_set_synergies.txt'")
-def cli_all_set_synergies(output_path: str):
+@click.flag("--pickle-output", is_flag=True, help="Also pickle the output (dict[str, dict[str, tuple[float, int]]]). Will write to the output path with a .pkl extension.", default=False)
+def cli_all_set_synergies(output_path: str, pickle_output: bool):
     """
     Calculate all possibles synergies (every champion with every other champion) in the whole dataset.
     This will write the output to a text file.
     Some synergies may not be included if there are no matches with them in the dataset.
     Warning: slow!
     """
-    all_set_synergies(output_path=output_path)
+    output_path = Path(output_path)
+
+    output = all_set_synergies(output_path=output_path)
+
+    if pickle_output:
+        with open(output_path.with_suffix(".pkl"), "wb") as f:
+            pickle.dump(output, f)
 
 
-def all_set_synergies(output_path: str = None) -> dict[str, dict[str, tuple[float, int]]]:
+def all_set_synergies(output_path: Path = None) -> dict[str, dict[str, tuple[float, int]]]:
     """
     This function returns a dictionary {champ0: {champ1: (winrate, num of matches)}}.
     """
