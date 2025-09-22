@@ -1,22 +1,25 @@
-import os
-import torch
 from torch import nn
 import sklearn
 import numpy as np
+from torch.nn.functional import embedding
+
 
 class NeuralNetwork(nn.Module):
     def __init__(self, num_champions: int):
         super().__init__()
-        self.flatten = nn.Flatten()
+
         self.num_champions = num_champions
         self.scaler = sklearn.preprocessing.StandardScaler()
+
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(1 + self.num_champions * 3, 512),
+            nn.Linear(1 + self.num_champions*3, 512),
             nn.ReLU(),
-            nn.Linear(512, 512),
+            nn.Linear(512, 1024),
             nn.ReLU(),
-            nn.Linear(512, 2),
-            nn.LogSoftmax(dim=1)
+            nn.Linear(1024, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
@@ -28,18 +31,27 @@ class NeuralNetwork(nn.Module):
         self.scaler.fit(games)
 
     def embed_game(self, game: list, scale: bool = True):
-        embeded = [game[0]]
-        embeded += [0] * self.num_champions * 3
-        for pick in game[1][0:5]:
-            embeded[pick + 1] = 1
-        for pick in game[1][5:10]:
-            embeded[pick + 1 + self.num_champions] = 1
-        for ban in game[2]:
-            embeded[ban + 1 + self.num_champions * 2] = 1
+        # write the ranked score
+        embedded = [game[0]]
+        # fill with zeros for one-hot-encoding of picks/bans
+        embedded += [0] * self.num_champions * 3
 
+        # encode blue side picks
+        for pick in game[1][0:5]:
+            embedded[pick + 1] = 1
+        # encode red side picks
+        for pick in game[1][5:10]:
+            embedded[pick + 1 + self.num_champions] = 1
+
+        # encode all bans
+        for ban in game[2]:
+            embedded[ban + 1 + self.num_champions*2] = 1
+
+        # standard scale the whole embedding if desired
         if scale:
-            embeded = self.scaler.transform([embeded])
-        return embeded
+            embedded = self.scaler.transform([embedded])
+
+        return np.array(embedded, dtype=np.float32)
 
     def embed_games(self, games, scale: bool = True):
-        return [self.embed_game(game, scale=scale) for game in games]
+        return np.array([self.embed_game(game, scale=scale) for game in games])

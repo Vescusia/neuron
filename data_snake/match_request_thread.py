@@ -90,7 +90,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
         matches_ball.close()
 
         # close dataset writer
-        ds_writer.close(redistribute=36_000)
+        ds_writer.close(redistribute=32_000)
 
 
 def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatcher) -> tuple[list[str], uint8, float]:
