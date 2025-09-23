@@ -24,8 +24,22 @@ else:
 def load_dataset():
     pd_dataset = DATASET.to_table().to_pandas()
 
-    wins = pd_dataset["win"].to_numpy().astype(np.float32)
-    games = pd_dataset[["ranked_score", "picks", "bans"]].to_numpy()
+    # load wins into a numpy array
+    wins = pd_dataset["win"].to_numpy().astype(dtype=np.float32)
+
+    # load ranked scores into a numpy array and reshape to 2d
+    ranked_scores = pd_dataset["ranked_score"].to_numpy()
+    ranked_scores = ranked_scores.reshape(-1, 1)
+
+    # load picks/bans into a numpy object (not array!!) which then has to be converted to python and back to an array
+    # (the only way D:)
+    picks = pd_dataset["picks"].to_numpy()
+    picks = np.array(picks.tolist(), dtype=np.uint16)  # uint16 prevents overflows
+    bans = pd_dataset["bans"].to_numpy()
+    bans = np.array(bans.tolist(), dtype=np.uint16)
+
+    # concatenate all columns into games
+    games = np.concatenate((ranked_scores, picks, bans), axis=1)
 
     return games, wins
 

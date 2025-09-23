@@ -15,20 +15,23 @@ class Embedder:
         # create 2d array for the embedded game
         embedded = np.zeros((len(games), 1 + self.num_champions * 3 + 1), dtype=np.float32)
 
-        for i, game in enumerate(games):
-            # write the ranked score
-            embedded[i][0] = game[0]
+        # write the ranked score
+        embedded[:, 0] = games[:, 0]
 
-            # encode blue side picks
-            for pick in game[1][0:5]:
-                embedded[i][pick] = 1
-            # encode red side picks
-            for pick in game[1][5:10]:
-                embedded[i][pick.astype(np.int16) + self.num_champions] = 1
+        # encode blue side picks
+        game_indices = np.arange(len(games))
+        pick_indices = games[:, 1:6] + 1  # ranked_score is in embedded[0]
+        embedded[game_indices.repeat(5), pick_indices.ravel()] = 1
 
-            # encode all bans
-            for ban in game[2]:
-                embedded[i][ban.astype(np.int16) + 1 + self.num_champions * 2] = 1
+        # encode red side picks
+        game_indices = np.arange(len(games))
+        pick_indices = games[:, 6:11] + 1 + self.num_champions  # pick indices are first
+        embedded[game_indices.repeat(5), pick_indices.ravel()] = 1
+
+        # encode bans
+        game_indices = np.arange(len(games))
+        ban_indices = games[:, 11:21] + 1 + 2*self.num_champions  # both pick indices are first
+        embedded[game_indices.repeat(10), ban_indices.ravel()] = 1
 
         # standard scale the whole embedding if desired
         if scale:
