@@ -1,15 +1,14 @@
 import time
-import random
 
 from tqdm import tqdm
 import torch
 import sklearn
 import numpy as np
 
-from model import NeuralNetwork
+from .model import NeuralNetwork
 import lib.league_of_parquet as lop
 
-DATASET_PATH = "../../data/dataset"
+DATASET_PATH = "./data/dataset"
 
 DATASET = lop.open_dataset(DATASET_PATH)
 
