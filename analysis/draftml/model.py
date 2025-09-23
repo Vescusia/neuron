@@ -1,3 +1,4 @@
+from torch import tensor
 from torch import nn
 import sklearn
 import numpy as np
@@ -67,7 +68,9 @@ class ResBlock(nn.Module):
     def __init__(self, in_out_features: int, width_factor: int):
         super().__init__()
 
+        self.alpha = nn.Parameter(tensor(1.))
         self.relu = nn.ReLU()
+
         self.linear_stack = nn.Sequential(
             nn.Linear(in_out_features, in_out_features * width_factor),
             nn.ReLU(),
@@ -83,7 +86,7 @@ class ResBlock(nn.Module):
     def forward(self, X):
         residual = X
         out = self.linear_stack(X)
-        out += residual
+        out += residual * self.alpha
         out = self.relu(out)
         return out
 
@@ -93,7 +96,7 @@ class ResNet60(nn.Module):
         super().__init__()
 
         self.res_block_stack = nn.Sequential(
-            nn.Linear(1 + num_champions*3, 64),
+            nn.Linear(1 + num_champions*3, base_width),
             nn.ReLU(),
             ResBlock(base_width, width_factor),
             ResBlock(base_width, width_factor),
@@ -108,7 +111,7 @@ class ResNet60(nn.Module):
             ResBlock(base_width, width_factor),
             ResBlock(base_width, width_factor),
             ResBlock(base_width, width_factor),
-            nn.Linear(64, 1),
+            nn.Linear(base_width, 1),
             nn.Sigmoid()
         )
 

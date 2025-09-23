@@ -28,7 +28,7 @@ def train_model(batch_size=10_000, evaluate_every=100_000):
     print(f"Loaded Dataset in {(time.time() - start):.0f} s")
 
     # train loop
-    model = ResNet60(172, 0.1)  # HAS TO BEEEEE ONE LARGER BECAUSE OF NO CHAMP IN BANS
+    model = ResNet60(172, 0.1, 2, 64)  # HAS TO BEEEEE ONE LARGER BECAUSE OF NO CHAMP IN BANS
     embedder = Embedder(172)  # HAS TO BEEEEE ONE LARGER BECAUSE OF NO CHAMP IN BANS
     embedder.fit(test_games[0:batch_size])
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
