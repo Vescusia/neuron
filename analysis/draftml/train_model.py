@@ -5,7 +5,7 @@ import torch
 import sklearn
 import numpy as np
 
-from .model import NeuralNetwork
+from .model import Embedder, LinearWide54, ResNet60
 import lib.league_of_parquet as lop
 
 DATASET_PATH = "./data/dataset"
@@ -21,7 +21,6 @@ def load_dataset():
 
     return games, wins
 
-
 def train_model(batch_size=10_000, evaluate_every=100_000):
     start = time.time()
     train_games, train_wins = load_dataset()
@@ -29,8 +28,9 @@ def train_model(batch_size=10_000, evaluate_every=100_000):
     print(f"Loaded Dataset in {(time.time() - start):.0f} s")
 
     # train loop
-    model = NeuralNetwork(172)  # HAS TO BEEEEE ONE LARGER BECAUSE OF NO CHAMP IN BANS
-    model.fit_scaler(test_games[0:batch_size])
+    model = ResNet60(172, 0.1)  # HAS TO BEEEEE ONE LARGER BECAUSE OF NO CHAMP IN BANS
+    embedder = Embedder(172)  # HAS TO BEEEEE ONE LARGER BECAUSE OF NO CHAMP IN BANS
+    embedder.fit(test_games[0:batch_size])
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     loss_fn = torch.nn.BCELoss()
 
@@ -44,7 +44,7 @@ def train_model(batch_size=10_000, evaluate_every=100_000):
         for i in batch_range:
             # get a batch of random games
             games, wins = train_games[i:i + batch_size], train_wins[i:i + batch_size]
-            games = model.embed_games(games)
+            games = embedder(games)
             games = torch.from_numpy(games)
             wins = torch.from_numpy(wins)
 
@@ -64,7 +64,7 @@ def train_model(batch_size=10_000, evaluate_every=100_000):
                 with torch.no_grad():
                     # get a batch of random games
                     games, wins = test_games[0:batch_size], test_wins[0:batch_size]
-                    games = model.embed_games(games)
+                    games = embedder(games)
                     games = torch.from_numpy(games)
 
                     # predict win/lose
@@ -88,8 +88,6 @@ def train_model(batch_size=10_000, evaluate_every=100_000):
                           )
 
                 model.train()
-
-
 
 
 if __name__ == "__main__":
