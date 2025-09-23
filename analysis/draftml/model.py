@@ -1,7 +1,6 @@
 from torch import nn
 import sklearn
 import numpy as np
-from torch.nn.functional import embedding
 
 
 class NeuralNetwork(nn.Module):
@@ -12,11 +11,11 @@ class NeuralNetwork(nn.Module):
         self.scaler = sklearn.preprocessing.StandardScaler()
 
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(1 + self.num_champions*3, 512),
+            nn.Linear(1 + self.num_champions*3, 1024),
             nn.ReLU(),
-            nn.Linear(512, 1024),
+            nn.Linear(1024, 512),
             nn.ReLU(),
-            nn.Linear(1024, 128),
+            nn.Linear(512, 128),
             nn.ReLU(),
             nn.Linear(128, 1),
             nn.Sigmoid()
@@ -41,11 +40,11 @@ class NeuralNetwork(nn.Module):
             embedded[pick + 1] = 1
         # encode red side picks
         for pick in game[1][5:10]:
-            embedded[pick + 1 + self.num_champions] = 1
+            embedded[int(pick) + 1 + self.num_champions] = 1
 
         # encode all bans
         for ban in game[2]:
-            embedded[ban + 1 + self.num_champions*2] = 1
+            embedded[int(ban) + 1 + self.num_champions*2] = 1
 
         # standard scale the whole embedding if desired
         if scale:

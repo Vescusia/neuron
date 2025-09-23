@@ -3,7 +3,7 @@ import random
 
 from tqdm import tqdm
 import torch
-from sklearn.metrics import classification_report
+import sklearn
 import numpy as np
 
 from model import NeuralNetwork
@@ -13,41 +13,25 @@ DATASET_PATH = "../../data/dataset"
 
 DATASET = lop.open_dataset(DATASET_PATH)
 
-TOTAL_ROWS = DATASET.count_rows()
-TEST_ROWS = TOTAL_ROWS // 10
+
+def load_dataset():
+    pd_dataset = DATASET.to_table().to_pandas()
+
+    wins = pd_dataset["win"].to_numpy().astype(np.float32)
+    games = pd_dataset[["ranked_score", "picks", "bans"]].to_numpy()
+
+    return games, wins
 
 
-def take_random_games(num_rows: int, train: bool):
-    rows = []
-    # generate random row indexes within the train/test ranges
-    for _ in range(num_rows):
-        rows.append(random.randint(TEST_ROWS if train else 0, TOTAL_ROWS - 1 if train else TEST_ROWS - 1))
+def train_model(batch_size=10_000, evaluate_every=100_000):
+    start = time.time()
+    train_games, train_wins = load_dataset()
+    train_games, test_games, train_wins, test_wins = sklearn.model_selection.train_test_split(train_games, train_wins, test_size=0.10)
+    print(f"Loaded Dataset in {(time.time() - start):.0f} s")
 
-    # take the rows from the dataset and covert them to python objects
-    batch = DATASET.take(rows).to_pydict()
-    # initialize a list for each game
-    games = [[] for _ in range(num_rows)]
-
-    # iterate over the columns and append the partial data to each game
-    for i, column in enumerate(batch.keys()):
-        # skip the patch column (wanna be patch-agnostic)
-        if column == "patch":
-            continue
-        # skip the win column (we're predicting it)
-        elif column == "win":
-            wins = [1 if win else 0 for win in batch[column]]
-            continue
-        # append ranked score, picks and bans to the game
-        for j, entry in enumerate(batch[column]):
-            games[j].append(entry)
-
-    return games, np.array(wins, dtype=np.float32)
-
-
-def train_model(batch_size=10_000, evaluate_every=25):
     # train loop
     model = NeuralNetwork(172)  # HAS TO BEEEEE ONE LARGER BECAUSE OF NO CHAMP IN BANS
-    model.fit_scaler(take_random_games(10000, True)[0])
+    model.fit_scaler(test_games[0:batch_size])
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     loss_fn = torch.nn.BCELoss()
 
@@ -56,10 +40,11 @@ def train_model(batch_size=10_000, evaluate_every=25):
         total_loss = 0.0
 
         # train model for this epoch
-        batch_range = tqdm(range((TOTAL_ROWS - TEST_ROWS) // batch_size))
+        batch_range = tqdm(range(0, len(train_games), batch_size))
+        batch_range.set_description(f"EPOCH {epoch + 1}")
         for i in batch_range:
             # get a batch of random games
-            games, wins = take_random_games(batch_size, True)
+            games, wins = train_games[i:i + batch_size], train_wins[i:i + batch_size]
             games = model.embed_games(games)
             games = torch.from_numpy(games)
             wins = torch.from_numpy(wins)
@@ -79,20 +64,33 @@ def train_model(batch_size=10_000, evaluate_every=25):
                 model.eval()
                 with torch.no_grad():
                     # get a batch of random games
-                    games, wins = take_random_games(batch_size, False)
+                    games, wins = test_games[0:batch_size], test_wins[0:batch_size]
                     games = model.embed_games(games)
                     games = torch.from_numpy(games)
 
                     # predict win/lose
                     predicted_wins = torch.flatten(model(games))
                     predicted_wins = predicted_wins.numpy()
-                    predicted_wins = np.round(predicted_wins)
+                    #predicted_wins = np.round(predicted_wins)
+                    print("\n" + sklearn.metrics.classification_report(wins, np.round(predicted_wins), zero_division=np.nan)
+                          + f"total loss: {total_loss:.4f} in {(time.time() - start_time) / 60:.2f} m (EPOCH {epoch + 1})"
+                          )
 
-                    print("\n" + classification_report(wins, predicted_wins, zero_division=np.nan)
+                    rand_array = np.random.rand(len(predicted_wins))
+                    for i in range(len(predicted_wins)):
+                        if rand_array[i] < predicted_wins[i]:
+                            predicted_wins[i] = 0
+                        else:
+                            predicted_wins[i] = 1
+
+
+                    print("\n" + sklearn.metrics.classification_report(wins, predicted_wins, zero_division=np.nan)
                           + f"total loss: {total_loss:.4f} in {(time.time() - start_time) / 60:.2f} m (EPOCH {epoch + 1})"
                           )
 
                 model.train()
+
+
 
 
 if __name__ == "__main__":
