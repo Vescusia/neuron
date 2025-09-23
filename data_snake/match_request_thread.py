@@ -32,6 +32,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
             try:
                 # break if we get the signal to stop
                 if not stop_q.empty():
+                    print(f"\n{continent} Shutting down...")
                     state_q.put((0, 0.))
                     break
 
@@ -167,7 +168,7 @@ def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatche
     if ranked_score is not None:
         satisfaction = len(new_matches) / len(matches)
     else:
-        print("unranked summoner, skipping...")
+        print(f"Unranked summoner, skipping...")
         satisfaction = 0.
 
     # update summoner next request time of the summoner in the database

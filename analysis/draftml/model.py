@@ -14,13 +14,16 @@ class Embedder:
         embedded = [game[0]]
         # fill with zeros for one-hot-encoding of picks/bans
         embedded += [0] * self.num_champions * 3
+        embedded += [0]  # bans can also be None
 
         # encode blue side picks
         for pick in game[1][0:5]:
-            embedded[pick + 1] = 1
+            if pick == 0:
+                print("AHAHHAHAHAHHA")
+            embedded[pick] = 1
         # encode red side picks
         for pick in game[1][5:10]:
-            embedded[int(pick) + 1 + self.num_champions] = 1
+            embedded[int(pick) + self.num_champions] = 1
 
         # encode all bans
         for ban in game[2]:
@@ -48,7 +51,7 @@ class LinearWide54(nn.Module):
         super().__init__()
 
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(1 + num_champions*3, 1024),
+            nn.Linear(2 + num_champions*3, 1024),
             nn.ReLU(),
             nn.Linear(1024, 512),
             nn.ReLU(),
@@ -96,7 +99,7 @@ class ResNet60(nn.Module):
         super().__init__()
 
         self.res_block_stack = nn.Sequential(
-            nn.Linear(1 + num_champions*3, base_width),
+            nn.Linear(2 + num_champions*3, base_width),
             nn.ReLU(),
             ResBlock(base_width, width_factor),
             ResBlock(base_width, width_factor),
