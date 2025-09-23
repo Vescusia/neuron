@@ -1,3 +1,5 @@
+import time
+
 from torch import tensor
 from torch import nn
 import sklearn
@@ -9,34 +11,30 @@ class Embedder:
         self.num_champions = num_champions
         self.scaler = sklearn.preprocessing.StandardScaler()
 
-    def embed_game(self, game: list, scale: bool = True):
-        # write the ranked score
-        embedded = [game[0]]
-        # fill with zeros for one-hot-encoding of picks/bans
-        embedded += [0] * self.num_champions * 3
-        embedded += [0]  # bans can also be None
+    def embed_games(self, games, scale: bool = True):
+        # create 2d array for the embedded game
+        embedded = np.zeros((len(games), 1 + self.num_champions * 3 + 1), dtype=np.float32)
 
-        # encode blue side picks
-        for pick in game[1][0:5]:
-            if pick == 0:
-                print("AHAHHAHAHAHHA")
-            embedded[pick] = 1
-        # encode red side picks
-        for pick in game[1][5:10]:
-            embedded[int(pick) + self.num_champions] = 1
+        for i, game in enumerate(games):
+            # write the ranked score
+            embedded[i][0] = game[0]
 
-        # encode all bans
-        for ban in game[2]:
-            embedded[int(ban) + 1 + self.num_champions*2] = 1
+            # encode blue side picks
+            for pick in game[1][0:5]:
+                embedded[i][pick] = 1
+            # encode red side picks
+            for pick in game[1][5:10]:
+                embedded[i][pick.astype(np.int16) + self.num_champions] = 1
+
+            # encode all bans
+            for ban in game[2]:
+                embedded[i][ban.astype(np.int16) + 1 + self.num_champions * 2] = 1
 
         # standard scale the whole embedding if desired
         if scale:
-            embedded = self.scaler.transform([embedded])
+            embedded = self.scaler.transform(embedded)
 
-        return np.array(embedded, dtype=np.float32)
-
-    def embed_games(self, games, scale: bool = True):
-        return np.array([self.embed_game(game, scale=scale) for game in games])
+        return embedded
 
     def __call__(self, games):
         return self.embed_games(games)
