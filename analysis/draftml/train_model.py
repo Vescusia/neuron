@@ -1,4 +1,6 @@
 import time
+from pathlib import Path
+from json import dumps
 
 from tqdm import tqdm
 import torch
@@ -8,11 +10,15 @@ import numpy as np
 from .model import Embedder, LinearWide54, ResNet60
 import lib.league_of_parquet as lop
 
-DATASET_PATH = "./data/dataset"
+# load dataset
+DATASET_PATH = Path("./data/dataset")
 print(f"Opening Dataset from {DATASET_PATH}")
 DATASET = lop.open_dataset(DATASET_PATH)
 
+# define save directory for the model
+MODEL_SAVE_DIR = Path("./analysis/draftml/models")
 
+# check for CUDA availability
 if torch.cuda.is_available():
     print(f"GPU: {torch.cuda.get_device_name(0)} is available.")
     DEVICE = torch.device("cuda")
@@ -21,7 +27,8 @@ else:
     DEVICE = torch.device("cpu")
 
 
-def load_dataset():
+def read_dataset():
+    # convert pyarrow dataset to row-based pandas dataframe
     pd_dataset = DATASET.to_table().to_pandas()
 
     # load wins into a numpy array
@@ -45,77 +52,92 @@ def load_dataset():
 
 
 def train_model(batch_size=10_000, evaluate_every=500_000):
-    # load dataset
+    # read and split dataset
     start = time.time()
-    train_games, train_wins = load_dataset()
+    train_games, train_wins = read_dataset()
     train_games, test_games, train_wins, test_wins = sklearn.model_selection.train_test_split(train_games, train_wins, test_size=0.10)
-    print(f"Loaded Dataset in {(time.time() - start):.0f} s")
+    print(f"Loaded Dataset in {(time.time() - start):.1f} s")
 
-    # initialize model and optimizer
-    model = ResNet60(171, 0.1, 2, 128).to(DEVICE)
+    # initialize model, embedder and optimizer
+    params = {"num_champions": 171, "base_width": 256, "width_factor": 3, "dropout": 0.1}
+    model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
-    embedder = Embedder(171)
+    embedder = Embedder(params["num_champions"])
     embedder.fit(test_games[0:batch_size])
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     loss_fn = torch.nn.BCELoss()
 
     # train loop
-    start_time = time.time()
+    start = time.time()
     total_loss = 0.0
-    for epoch in range(10):
-        # train model for this epoch
-        batch_range = tqdm(range(0, len(train_games), batch_size))
-        batch_range.set_description(f"EPOCH {epoch + 1}")
-        for i in batch_range:
-            # get a batch of random games
-            games, wins = train_games[i:i + batch_size], train_wins[i:i + batch_size]
-            games = embedder(games)
-            games = torch.from_numpy(games).to(DEVICE)
-            wins = torch.from_numpy(wins).to(DEVICE)
+    try:
+        for epoch in range(100):
+            # train model for this epoch
+            batch_range = tqdm(range(0, len(train_games), batch_size))
+            batch_range.set_description(f"EPOCH {epoch + 1}")
+            for i in batch_range:
+                # get a batch of random games
+                games, wins = train_games[i:i + batch_size], train_wins[i:i + batch_size]
+                games = embedder(games)
+                games = torch.from_numpy(games).to(DEVICE)
+                wins = torch.from_numpy(wins).to(DEVICE)
 
-            # predict win/lose
-            predicted_wins = torch.flatten(model(games))
-            # calculate loss
-            loss = loss_fn(predicted_wins, wins)
-            total_loss += loss.item()
-            # backpropagate
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                # predict win/lose
+                predicted_wins = torch.flatten(model(games))
+                # calculate loss
+                loss = loss_fn(predicted_wins, wins)
+                total_loss += loss.item()
+                # backpropagate
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-            if i % evaluate_every == 0 and i != 0:
-                # evaluate model
-                model.eval()
-                with torch.no_grad():
-                    # get a batch of random games
-                    games, wins = test_games[0:batch_size], test_wins[0:batch_size]
-                    games = embedder(games)
-                    games = torch.from_numpy(games).to(DEVICE)
+                if i % evaluate_every == 0 and i != 0:
+                    # evaluate model
+                    model.eval()
+                    with torch.no_grad():
+                        # get a batch of random games
+                        games, wins = test_games[0:batch_size], test_wins[0:batch_size]
+                        games = embedder(games)
+                        games = torch.from_numpy(games).to(DEVICE)
 
-                    # predict win/lose
-                    predicted_wins = torch.flatten(model(games))
-                    predicted_wins = predicted_wins.cpu().numpy()
+                        # predict win/lose
+                        predicted_wins = torch.flatten(model(games))
+                        predicted_wins = predicted_wins.cpu().numpy()
 
-                    print(f"\nAlpha of block 1: {model.get_parameter('res_block_stack.2.alpha')}")
-                    print(sklearn.metrics.classification_report(wins, np.round(predicted_wins), zero_division=np.nan)
-                          + f"total loss: {total_loss:.4f} in {(time.time() - start_time) / 60:.2f} m (EPOCH {epoch + 1})"
-                          )
+                        print(f"\nAlpha of block 1: {model.get_parameter('res_block_stack.2.alpha')}")
+                        print(sklearn.metrics.classification_report(wins, np.round(predicted_wins), zero_division=np.nan)
+                              + f"total loss: {total_loss:.4f} in {(time.time() - start) / 60:.2f} m (EPOCH {epoch + 1})"
+                              )
 
-                    rand_array = np.random.rand(len(predicted_wins))
-                    for j in range(len(predicted_wins)):
-                        if rand_array[j] < predicted_wins[j]:
-                            predicted_wins[j] = 0
-                        else:
-                            predicted_wins[j] = 1
+                        rand_array = np.random.rand(len(predicted_wins))
+                        for j in range(len(predicted_wins)):
+                            if rand_array[j] < predicted_wins[j]:
+                                predicted_wins[j] = 0
+                            else:
+                                predicted_wins[j] = 1
 
-                    print("\n" + sklearn.metrics.classification_report(wins, predicted_wins, zero_division=np.nan))
+                        print("\n" + sklearn.metrics.classification_report(wins, predicted_wins, zero_division=np.nan))
 
-                total_loss = 0.0
-                model.train()
+                    total_loss = 0.0
+                    model.train()
 
-        # reshuffle train and test data (separately!) every epoch
-        train_games, train_wins = sklearn.utils.shuffle(train_games, train_wins)
-        test_games, test_wins = sklearn.utils.shuffle(test_games, test_wins)
+            # reshuffle train and test data (separately!) every epoch
+            train_games, train_wins = sklearn.utils.shuffle(train_games, train_wins)
+            test_games, test_wins = sklearn.utils.shuffle(test_games, test_wins)
+
+    finally:
+        # create a directory for the model, embedder and params within the main model directory
+        real_save_dir = MODEL_SAVE_DIR / f"{int(time.time())}"
+        real_save_dir.mkdir(parents=True, exist_ok=True)
+
+        # save model, embedder and params
+        with open(real_save_dir / "model.pt", "wb") as f:
+            torch.save(model, f)
+        with open(real_save_dir / "embedder.pt", "wb") as f:
+            torch.save(embedder, f)
+        with open(real_save_dir / "params.json", "w") as f:
+            f.write(dumps(params))
 
 
 if __name__ == "__main__":
