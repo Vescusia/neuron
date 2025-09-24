@@ -1,5 +1,3 @@
-from time import process_time_ns
-
 from torch import tensor, nn, cat, unsqueeze
 import sklearn
 import numpy as np
@@ -29,9 +27,6 @@ class Embedder:
         game_indices = np.arange(len(games)).repeat(10)[ban_indices != 0]
         embedded[game_indices, ban_indices[ban_indices != 0] - 1 + self.num_champions * 2] = 1  # both pick indices are first, None pick (id 0) isn't possible
 
-        # write patch
-        embedded[:, -2] = games[:, -2]
-
         # write ranked_score
         embedded[:, -1] = games[:, -1]
 
@@ -54,7 +49,7 @@ class LinearWide54(nn.Module):
         super().__init__()
 
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(num_champions * 3 + 1 + 1, 1024),
+            nn.Linear(num_champions * 3 + 1, 1024),
             nn.ReLU(),
             nn.Linear(1024, 512),
             nn.ReLU(),
@@ -92,30 +87,29 @@ class ResBlock(nn.Module):
 
 
 class ResNet60(nn.Module):
-    def __init__(self, num_champions: int, dropout: float, bottleneck: int, base_width: int):
+    def __init__(self, num_champions: int, dropout: float, bottleneck: int, base_width: int, pre_rank_blocks: int, post_rank_blocks: int):
         super().__init__()
 
         self.res_blocks_pre_rank = nn.Sequential(
+            nn.Linear(num_champions * 3, num_champions * 3),
+            nn.ReLU(),
             nn.Linear(num_champions * 3, base_width),
             nn.ReLU(),
-            *[ResBlock(base_width, bottleneck, dropout) for _ in range(3)],
-            nn.Linear(base_width, num_champions * 3),
-            nn.ReLU(),
+            *[ResBlock(base_width, bottleneck, dropout) for _ in range(pre_rank_blocks)],
         )
 
         self.res_blocks_post_rank = nn.Sequential(
-            nn.Linear(num_champions * 3 + 1 + 1, base_width),
+            nn.Linear(base_width + 1, base_width),
             nn.ReLU(),
-            *[ResBlock(base_width, bottleneck, dropout) for _ in range(3)],
+            *[ResBlock(base_width, bottleneck, dropout) for _ in range(post_rank_blocks)],
             nn.Linear(base_width, 1),
             nn.Sigmoid()
         )
 
     def forward(self, X):
         champs = X[:, :-2]
-        patches = X[:, -2]
         ranks = X[:, -1]
         out = self.res_blocks_pre_rank(champs)
-        X = cat([out, unsqueeze(patches, 1), unsqueeze(ranks, 1)], dim=-1)
+        X = cat([out, unsqueeze(ranks, 1)], dim=-1)
         out = self.res_blocks_post_rank(X)
         return out

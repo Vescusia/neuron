@@ -1,7 +1,5 @@
-import time
 
-from torch import tensor
-from torch import nn
+from torch import tensor, nn, cat, unsqueeze
 import sklearn
 import numpy as np
 
@@ -16,22 +14,18 @@ class Embedder:
         embedded = np.zeros((len(games), self.num_champions * 3 + 1 + 1), dtype=np.float32)
 
         # encode blue side picks
-        game_indices = np.arange(len(games))
-        pick_indices = games[:, 0:5]
-        pick_indices = pick_indices[pick_indices != 0] - 1
-        embedded[game_indices.repeat(len(pick_indices)), pick_indices.ravel()] = 1
+        game_indices = np.arange(len(games)).repeat(5)
+        pick_indices = games[:, 0:5].ravel()
+        embedded[game_indices[pick_indices != 0], pick_indices[pick_indices != 0] - 1] = 1
 
         # encode red side picks
-        game_indices = np.arange(len(games))
-        pick_indices = games[:, 5:10]
-        pick_indices = pick_indices[pick_indices != 0] - 1 + self.num_champions
-        embedded[game_indices.repeat(len(pick_indices)), pick_indices.ravel()] = 1
+        pick_indices = games[:, 5:10].ravel()
+        embedded[game_indices[pick_indices != 0], pick_indices[pick_indices != 0] - 1 + self.num_champions] = 1
 
         # encode bans
-        game_indices = np.arange(len(games))
-        ban_indices = games[:, 10:20]
-        ban_indices = ban_indices[ban_indices != 0] - 1 + self.num_champions * 2
-        embedded[game_indices.repeat(len(ban_indices)), ban_indices.ravel()] = 1
+        game_indices = np.arange(len(games)).repeat(10)
+        ban_indices = games[:, 10:20].ravel()
+        embedded[game_indices[ban_indices != 0], ban_indices[ban_indices != 0] - 1 + 2 * self.num_champions] = 1
 
         # write ranked_score
         embedded[:, -2] = games[:, -2]
@@ -45,49 +39,75 @@ class Embedder:
 
         return embedded
 
+    def __call__(self, games):
+        return self.embed_games(games)
+
+    def fit(self, games):
+        games = self.embed_games(games, scale=False)
+        self.scaler.fit(games)
+
 
 class ResNet20(nn.Module):
     class ResBlock(nn.Module):
-        def __init__(self, in_out_features: int, width_factor: int, dropout: float):
+        def __init__(self, in_out_features: int, bottleneck: int, dropout: float):
             super().__init__()
 
             self.alpha = nn.Parameter(tensor(0.))
-            self.relu = nn.ReLU()
 
+            self.dropout = nn.Dropout(dropout)
             self.linear_stack = nn.Sequential(
-                nn.Linear(in_out_features, in_out_features * width_factor),
+                nn.Linear(in_out_features, bottleneck),
                 nn.ReLU(),
-                nn.Linear(in_out_features * width_factor, 2 * in_out_features * width_factor),
+                nn.Linear(bottleneck, in_out_features),
                 nn.ReLU(),
-                nn.Linear(2 * in_out_features * width_factor, 2 * in_out_features * width_factor),
-                nn.ReLU(),
-                nn.Linear(2 * in_out_features * width_factor, in_out_features * width_factor),
-                nn.ReLU(),
-                nn.Linear(in_out_features * width_factor, in_out_features),
-                nn.ReLU(),
-                nn.Dropout(dropout),
             )
 
         def forward(self, X):
             residual = X
             out = self.linear_stack(X)
-            out = self.relu(out)
             out = out * self.alpha + residual
+            out = self.dropout(out)
             return out
 
 
-    def __init__(self, num_champions: int, dropout: float, width_factor: int, base_width: int):
+    def __init__(self, num_champions: int, width: int, bottleneck: int, dropout: float, blocks_pre_win: int, blocks_pre_rank: int, blocks_post_rank: int):
         super().__init__()
 
-        self.res_block_stack = nn.Sequential(
-            nn.Linear(2 + num_champions*3, base_width),
+        self.res_blocks_pre_win = nn.Sequential(
+            nn.Linear(num_champions * 3, width),
             nn.ReLU(),
-            *[self.ResBlock(base_width, width_factor, dropout) for _ in range(20)],
-            nn.Linear(base_width, num_champions),
+            *[self.ResBlock(width, bottleneck, dropout) for _ in range(blocks_pre_win)],
+        )
+
+        self.res_blocks_pre_rank = nn.Sequential(
+            nn.Linear(width + 1, width),
             nn.ReLU(),
-            nn.LogSoftmax(num_champions)
+            *[self.ResBlock(width, width, dropout) for _ in range(blocks_pre_rank)],
+        )
+
+        self.res_blocks_post_rank = nn.Sequential(
+            nn.Linear(width + 1, width),
+            nn.ReLU(),
+            *[self.ResBlock(width, bottleneck, dropout) for _ in range(blocks_post_rank)],
+            nn.Linear(width, num_champions),
+            nn.ReLU(),
+            nn.LogSoftmax()
         )
 
     def forward(self, X):
-        out = self.res_block_stack(X)
+        # split out champions, ranked_scores and wins from the embedded X
+        champs = X[:, :-2]
+        ranks = X[:, -2]
+        wins = X[:, -1]
+
+        out = self.res_blocks_pre_win(champs)
+
+        # add wins
+        out = cat((out, unsqueeze(wins, 1)), dim=-1)
+        out = self.res_blocks_pre_rank(out)
+
+        # add ranks
+        out = cat((out, unsqueeze(ranks, 1)), dim=-1)
+        out = self.res_blocks_post_rank(out)
+
         return out

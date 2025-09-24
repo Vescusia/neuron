@@ -29,53 +29,56 @@ else:
 
 def read_dataset():
     # convert pyarrow dataset to row-based pandas dataframe
-    pd_dataset = DATASET.to_table().to_pandas()
+    dataset = DATASET.to_table()
 
     # load wins into a numpy array
-    wins = pd_dataset["win"].to_numpy().astype(dtype=np.float32)
-
-    # load patches and reshape into 2d
-    patches = pd_dataset["patch"].to_numpy()
-    patches = patches.reshape(-1, 1)
+    wins = dataset["win"].to_numpy().astype(dtype=np.float32)
 
     # load ranked scores into a numpy array and reshape to 2d
-    ranked_scores = pd_dataset["ranked_score"].to_numpy()
+    ranked_scores = dataset["ranked_score"].to_numpy()
     ranked_scores = ranked_scores.reshape(-1, 1)
 
     # load picks/bans into a numpy object (not array!!) which then has to be converted to python and back to an array
     # (the only way D:)
-    picks = pd_dataset["picks"].to_numpy()
+    picks = dataset["picks"].to_numpy()
     picks = np.array(picks.tolist(), dtype=np.uint16)  # uint16 prevents overflows
-    bans = pd_dataset["bans"].to_numpy()
+    bans = dataset["bans"].to_numpy()
     bans = np.array(bans.tolist(), dtype=np.uint16)
 
     # concatenate all columns into games
-    games = np.concatenate((picks, bans, patches, ranked_scores), axis=1)
+    games = np.concatenate((picks, bans, ranked_scores), axis=1)
 
     return games, wins
 
 
-def train_model(batch_size=10_000, evaluate_every=500_000):
+def train_model(batch_size=10_000, evaluate_every=10_000_000, save_all_models=True):
     # read and split dataset
     start = time.time()
     train_games, train_wins = read_dataset()
     train_games, test_games, train_wins, test_wins = sklearn.model_selection.train_test_split(train_games, train_wins, test_size=0.10)
     print(f"Loaded Dataset in {(time.time() - start):.1f} s")
 
-    # initialize model, embedder and optimizer
-    params = {"num_champions": 171, "base_width": 256, "bottleneck": 6, "dropout": 0.1}
+    # initialize model
+    params = {"num_champions": 171, "base_width": 64, "bottleneck": 10, "dropout": 0.1, "pre_rank_blocks": 10, "post_rank_blocks": 20}
     model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
+    # initialize embedder
     embedder = Embedder(params["num_champions"])
     embedder.fit(test_games[0:batch_size])
+
+    # initialize optimizer and loss
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     loss_fn = torch.nn.BCELoss()
+
+    # keep track of confidence reports and model states for saving the optimum model
+    models = []
+    reports = []
 
     # train loop
     start = time.time()
     total_loss = 0.0
     try:
-        for epoch in range(100):
+        for epoch in range(1024):
             # train model for this epoch
             batch_range = tqdm(range(0, len(train_games), batch_size))
             batch_range.set_description(f"EPOCH {epoch + 1}")
@@ -117,9 +120,22 @@ def train_model(batch_size=10_000, evaluate_every=500_000):
                         high_conf_accuracy = sklearn.metrics.accuracy_score(high_conf_targets, np.round(high_conf_pred))
                         undecided = (len(predicted_wins) - len(high_conf_pred)) / len(predicted_wins)
 
-                        # print classification report
-                        print(f"\nAlpha of block 1: {model.get_parameter('res_blocks_post_rank.2.alpha')}")
-                        print(f"High confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided in {(time.time() - start) / 60:.1f} m")
+                        # build classification report
+                        report = (
+                            f"\nhigh confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided"
+                            f"\nloss since last report: {total_loss:.2f}"
+                            f"\nrough alpha: {model.get_parameter('res_blocks_post_rank.2.alpha').item():.5f}"
+                            f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}"
+                                  )
+
+                        # save report and current model
+                        reports.append(report)
+                        if save_all_models:
+                            models.append(np.copy(model))
+                        else:
+                            models[0] = np.copy(model)
+
+                        print(report)
 
                     total_loss = 0.0
                     model.train()
@@ -134,8 +150,10 @@ def train_model(batch_size=10_000, evaluate_every=500_000):
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
         # save model, embedder and params
-        with open(real_save_dir / "model.pt", "wb") as f:
-            torch.save(model, f)
+        with open(real_save_dir / "models.pt", "wb") as f:
+            torch.save(models, f)
+        with open(real_save_dir / "reports.txt", "w")  as f:
+            f.writelines(reports)
         with open(real_save_dir / "embedder.pt", "wb") as f:
             torch.save(embedder, f)
         with open(real_save_dir / "params.json", "w") as f:
