@@ -84,9 +84,10 @@ def take_random_games(num_games: int, train: bool):
     red_targets = red_targets[np.arange(len(red_targets)), np.tile(np.arange(5), len(red_targets) // 5)]
 
     # combine into one targets array
-    all_targets = np.empty(num_games * 5, dtype=np.uint16)
+    all_targets = np.empty(num_games * 5, dtype=np.int64)
     all_targets[wins == 1] = blue_targets
     all_targets[wins == 0] = red_targets
+    all_targets -= 1  # only no pick/ban is 0
 
     # mask game picks for blue side drafts
     blue_side_picks = picks[wins == 1].ravel()
@@ -113,6 +114,7 @@ def train_model(batch_size: int = 10_000, evaluate_every: int = 10_000_000):
     # create model
     params = {"num_champions": 171, "width": 128, "bottleneck": 5, "dropout": 0.1, "blocks_pre_win": 10, "blocks_pre_rank": 10, "blocks_post_rank": 20}
     model = ResNet20(**params).to(DEVICE)
+    print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
     # create embedder
     embedder = Embedder(params["num_champions"])
     embedder.fit(take_random_games(batch_size, True)[0])
@@ -132,51 +134,57 @@ def train_model(batch_size: int = 10_000, evaluate_every: int = 10_000_000):
         total_loss = 0
 
         while True:
-            # get a new batch
-            games, picks = take_random_games(batch_size, True)
-            games_trained += len(games)
+            # get a macro batch of games (fewer, larger take_random_games calls are much, much faster,
+            #   but the embedding takes so much memory that it requires smaller batches)
+            start = time.time()
+            macro_games, macro_picks = take_random_games(batch_size * 10, True)
+            print(f"loading took {time.time() - start:.3f} s")
 
-            # embed the batch
-            games = embedder(games)
-            games = torch.from_numpy(games).to(DEVICE)
+            for i in range(0, len(macro_games), batch_size):
+                # get a new batch
+                games, picks = macro_games[i:i + batch_size], macro_picks[i:i + batch_size]
+                games_trained += len(games)
 
-            # predict
-            pred_picks = model(games)
+                # embed the batch
+                games = embedder(games)
+                games = torch.from_numpy(games).to(DEVICE)
 
-            # calculate loss
-            picks = torch.from_numpy(picks).to(DEVICE)
-            print(picks)
-            loss = loss_fn(pred_picks, picks)
-            total_loss = loss.item()
+                # predict
+                pred_picks = model(games)
 
-            # backpropagate
-            loss.backward()
-            optim.zero_grad()
-            optim.step()
+                # calculate loss
+                picks = torch.from_numpy(picks).to(DEVICE)
+                loss = loss_fn(pred_picks, picks)
+                total_loss = loss.item()
 
-            # evaluate every once in a while
-            if games_trained - last_report >= evaluate_every:
-                model.eval()
-                with torch.no_grad():
-                    # get a new batch
-                    games, picks = take_random_games(batch_size, False)
-                    games_trained += len(games)
+                # backpropagate
+                loss.backward()
+                optim.zero_grad()
+                optim.step()
 
-                    # embed the batch
-                    games = embedder(games)
-                    games = torch.from_numpy(games).to(DEVICE)
+                # evaluate every once in a while
+                if games_trained - last_report >= evaluate_every:
+                    model.eval()
+                    with torch.no_grad():
+                        # get a new batch
+                        games, picks = take_random_games(batch_size, False)
+                        games_trained += len(games)
 
-                    # predict
-                    pred_picks = model(games)
-                    # take maximum argument as prediction
-                    pred_picks = torch.argmax(pred_picks, dim=1).cpu().numpy()
+                        # embed the batch
+                        games = embedder(games)
+                        games = torch.from_numpy(games).to(DEVICE)
 
-                    # report
-                    print(sklearn.metrics.classification_report(picks, pred_picks))
-                    print(f"total loss since last report: {total_loss}")
+                        # predict
+                        pred_picks = model(games)
+                        # take maximum argument as prediction
+                        pred_picks = torch.argmax(pred_picks, dim=1).cpu().numpy()
 
-                model.train()
-                total_loss = 0
+                        # report
+                        print(sklearn.metrics.classification_report(picks, pred_picks))
+                        print(f"total loss since last report: {total_loss}")
+
+                    model.train()
+                    total_loss = 0
 
     finally:
         pass

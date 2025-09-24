@@ -69,7 +69,6 @@ class ResNet20(nn.Module):
             out = self.dropout(out)
             return out
 
-
     def __init__(self, num_champions: int, width: int, bottleneck: int, dropout: float, blocks_pre_win: int, blocks_pre_rank: int, blocks_post_rank: int):
         super().__init__()
 
@@ -91,7 +90,7 @@ class ResNet20(nn.Module):
             *[self.ResBlock(width, bottleneck, dropout) for _ in range(blocks_post_rank)],
             nn.Linear(width, num_champions),
             nn.ReLU(),
-            nn.LogSoftmax()
+            nn.LogSoftmax(dim=1)
         )
 
     def forward(self, X):
