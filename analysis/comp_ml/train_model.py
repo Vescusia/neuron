@@ -63,7 +63,7 @@ def train_model(batch_size=10_000, evaluate_every=500_000):
     print(f"Loaded Dataset in {(time.time() - start):.1f} s")
 
     # initialize model, embedder and optimizer
-    params = {"num_champions": 171, "base_width": 256, "width_factor": 3, "dropout": 0.1}
+    params = {"num_champions": 171, "base_width": 256, "bottleneck": 6, "dropout": 0.1}
     model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
     embedder = Embedder(params["num_champions"])
@@ -109,11 +109,17 @@ def train_model(batch_size=10_000, evaluate_every=500_000):
                         predicted_wins = torch.flatten(model(games))
                         predicted_wins = predicted_wins.cpu().numpy()
 
+                        # slect high confidence predictions
+                        high_conf_pred = np.concatenate((predicted_wins[predicted_wins > 0.60], predicted_wins[predicted_wins < 0.4]))
+                        high_conf_targets = np.concatenate((wins[predicted_wins > 0.60], wins[predicted_wins < 0.4]))
+
+                        # score high confidence predictions
+                        high_conf_accuracy = sklearn.metrics.accuracy_score(high_conf_targets, np.round(high_conf_pred))
+                        undecided = (len(predicted_wins) - len(high_conf_pred)) / len(predicted_wins)
+
                         # print classification report
                         print(f"\nAlpha of block 1: {model.get_parameter('res_block_stack.2.alpha')}")
-                        print(sklearn.metrics.classification_report(wins, np.round(predicted_wins), zero_division=np.nan)
-                              + f"total loss: {total_loss:.4f} in {(time.time() - start) / 60:.2f} m (EPOCH {epoch + 1})"
-                              )
+                        print(f"High confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided.")
 
                     total_loss = 0.0
                     model.train()

@@ -23,17 +23,17 @@ class Embedder:
 
         # encode blue side picks
         game_indices = np.arange(len(games))
-        pick_indices = games[:, 2:7] + 2  # patch and ranked_score come first
+        pick_indices = games[:, 2:7] + 2 - 1  # patch and ranked_score come first, no pick is not possible
         embedded[game_indices.repeat(5), pick_indices.ravel()] = 1
 
         # encode red side picks
         game_indices = np.arange(len(games))
-        pick_indices = games[:, 7:12] + 2 + self.num_champions  # pick indices are first
+        pick_indices = games[:, 7:12] + 2 + self.num_champions - 1  # pick indices are first, no pick is not possible
         embedded[game_indices.repeat(5), pick_indices.ravel()] = 1
 
         # encode bans
         game_indices = np.arange(len(games))
-        ban_indices = games[:, 12:22] + 2 + 2*self.num_champions  # both pick indices are first
+        ban_indices = games[:, 12:22] + 2 + 2 * self.num_champions  # both pick indices are first
         embedded[game_indices.repeat(10), ban_indices.ravel()] = 1
 
         # standard scale the whole embedding if desired
@@ -72,52 +72,39 @@ class LinearWide54(nn.Module):
 
 
 class ResBlock(nn.Module):
-    def __init__(self, in_out_features: int, width_factor: int):
+    def __init__(self, in_out_features: int, bottleneck: int, dropout: float):
         super().__init__()
 
         self.alpha = nn.Parameter(tensor(0.))
-        self.relu = nn.ReLU()
 
         self.linear_stack = nn.Sequential(
-            nn.Linear(in_out_features, in_out_features * width_factor),
+            nn.Linear(in_out_features, bottleneck),
             nn.ReLU(),
-            nn.Linear(in_out_features * width_factor, 2 * in_out_features * width_factor),
+            nn.Linear(bottleneck, in_out_features),
             nn.ReLU(),
-            nn.Linear(2 * in_out_features * width_factor, 2 * in_out_features * width_factor),
-            nn.ReLU(),
-            nn.Linear(2 * in_out_features * width_factor, in_out_features * width_factor),
-            nn.ReLU(),
-            nn.Linear(in_out_features * width_factor, in_out_features),
+            nn.Dropout(dropout)
         )
 
     def forward(self, X):
         residual = X
         out = self.linear_stack(X)
-        out = self.relu(out)
         out = out * self.alpha + residual
         return out
 
 
 class ResNet60(nn.Module):
-    def __init__(self, num_champions: int, dropout: float, width_factor: int, base_width: int):
+    def __init__(self, num_champions: int, dropout: float, bottleneck: int, base_width: int):
         super().__init__()
 
         self.res_block_stack = nn.Sequential(
             nn.Linear(1 + 1 + num_champions*3 + 1, base_width),
             nn.ReLU(),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
-            nn.Dropout(dropout),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
-            ResBlock(base_width, width_factor),
+            ResBlock(base_width, bottleneck, dropout),
+            ResBlock(base_width, bottleneck, dropout),
+            ResBlock(base_width, bottleneck, dropout),
+            ResBlock(base_width, bottleneck, dropout),
+            ResBlock(base_width, bottleneck, dropout),
+            ResBlock(base_width, bottleneck, dropout),
             nn.Linear(base_width, 1),
             nn.Sigmoid()
         )
