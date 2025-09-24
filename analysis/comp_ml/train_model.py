@@ -50,7 +50,7 @@ def read_dataset():
     bans = np.array(bans.tolist(), dtype=np.uint16)
 
     # concatenate all columns into games
-    games = np.concatenate((patches, ranked_scores, picks, bans), axis=1)
+    games = np.concatenate((picks, bans, patches, ranked_scores), axis=1)
 
     return games, wins
 
@@ -109,17 +109,17 @@ def train_model(batch_size=10_000, evaluate_every=500_000):
                         predicted_wins = torch.flatten(model(games))
                         predicted_wins = predicted_wins.cpu().numpy()
 
-                        # slect high confidence predictions
+                        # select the high-confidence predictions
                         high_conf_pred = np.concatenate((predicted_wins[predicted_wins > 0.60], predicted_wins[predicted_wins < 0.4]))
                         high_conf_targets = np.concatenate((wins[predicted_wins > 0.60], wins[predicted_wins < 0.4]))
 
-                        # score high confidence predictions
+                        # score the high-confidence predictions
                         high_conf_accuracy = sklearn.metrics.accuracy_score(high_conf_targets, np.round(high_conf_pred))
                         undecided = (len(predicted_wins) - len(high_conf_pred)) / len(predicted_wins)
 
                         # print classification report
-                        print(f"\nAlpha of block 1: {model.get_parameter('res_block_stack.2.alpha')}")
-                        print(f"High confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided.")
+                        print(f"\nAlpha of block 1: {model.get_parameter('res_blocks_post_rank.2.alpha')}")
+                        print(f"High confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided in {(time.time() - start) / 60:.1f} m")
 
                     total_loss = 0.0
                     model.train()
