@@ -39,40 +39,11 @@ class Embedder:
 
         return embedded
 
-    def __call__(self, games):
-        return self.embed_games(games)
-
-    def fit(self, games):
-        games = self.embed_games(games, scale=False)
-        self.scaler.fit(games)
-
-
-class LinearWide54(nn.Module):
-    def __init__(self, num_champions: int):
-        super().__init__()
-
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(2 + num_champions*3, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 512),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(512, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        logits = self.linear_relu_stack(x)
-        return logits
-
-
 class ResBlock(nn.Module):
     def __init__(self, in_out_features: int, width_factor: int):
         super().__init__()
 
-        self.alpha = nn.Parameter(tensor(1.))
+        self.alpha = nn.Parameter(tensor(0.))
         self.relu = nn.ReLU()
 
         self.linear_stack = nn.Sequential(
@@ -90,8 +61,8 @@ class ResBlock(nn.Module):
     def forward(self, X):
         residual = X
         out = self.linear_stack(X)
-        out += residual * self.alpha
         out = self.relu(out)
+        out = out * self.alpha + residual
         return out
 
 
@@ -122,3 +93,6 @@ class ResNet60(nn.Module):
     def forward(self, X):
         out = self.res_block_stack(X)
         return out
+
+
+

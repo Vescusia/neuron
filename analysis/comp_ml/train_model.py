@@ -16,7 +16,7 @@ print(f"Opening Dataset from {DATASET_PATH}")
 DATASET = lop.open_dataset(DATASET_PATH)
 
 # define save directory for the model
-MODEL_SAVE_DIR = Path("./analysis/draftml/models")
+MODEL_SAVE_DIR = Path("./analysis/comp_ml/models")
 
 # check for CUDA availability
 if torch.cuda.is_available():
@@ -34,6 +34,10 @@ def read_dataset():
     # load wins into a numpy array
     wins = pd_dataset["win"].to_numpy().astype(dtype=np.float32)
 
+    # load patches and reshape into 2d
+    patches = pd_dataset["patch"].to_numpy()
+    patches = patches.reshape(-1, 1)
+
     # load ranked scores into a numpy array and reshape to 2d
     ranked_scores = pd_dataset["ranked_score"].to_numpy()
     ranked_scores = ranked_scores.reshape(-1, 1)
@@ -46,7 +50,7 @@ def read_dataset():
     bans = np.array(bans.tolist(), dtype=np.uint16)
 
     # concatenate all columns into games
-    games = np.concatenate((ranked_scores, picks, bans), axis=1)
+    games = np.concatenate((patches, ranked_scores, picks, bans), axis=1)
 
     return games, wins
 
@@ -105,19 +109,11 @@ def train_model(batch_size=10_000, evaluate_every=500_000):
                         predicted_wins = torch.flatten(model(games))
                         predicted_wins = predicted_wins.cpu().numpy()
 
+                        # print classification report
                         print(f"\nAlpha of block 1: {model.get_parameter('res_block_stack.2.alpha')}")
                         print(sklearn.metrics.classification_report(wins, np.round(predicted_wins), zero_division=np.nan)
                               + f"total loss: {total_loss:.4f} in {(time.time() - start) / 60:.2f} m (EPOCH {epoch + 1})"
                               )
-
-                        rand_array = np.random.rand(len(predicted_wins))
-                        for j in range(len(predicted_wins)):
-                            if rand_array[j] < predicted_wins[j]:
-                                predicted_wins[j] = 0
-                            else:
-                                predicted_wins[j] = 1
-
-                        print("\n" + sklearn.metrics.classification_report(wins, predicted_wins, zero_division=np.nan))
 
                     total_loss = 0.0
                     model.train()
