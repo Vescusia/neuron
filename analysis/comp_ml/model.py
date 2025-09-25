@@ -10,7 +10,7 @@ class Embedder:
 
     def embed_games(self, games, scale: bool = True):
         # create 2d array for the embedded game
-        embedded = np.zeros((len(games), self.num_champions * 3 + 1 + 1), dtype=np.float32)
+        embedded = np.zeros((len(games), self.num_champions * 2 + 1 + 1), dtype=np.float32)
 
         # encode blue side picks
         game_indices = np.arange(len(games))
@@ -22,10 +22,8 @@ class Embedder:
         pick_indices = games[:, 5:10] - 1 + self.num_champions  # pick indices are first, None pick (id 0) isn't possible
         embedded[game_indices.repeat(5), pick_indices.ravel()] = 1
 
-        # encode bans
-        ban_indices = games[:, 10:20].ravel()
-        game_indices = np.arange(len(games)).repeat(10)[ban_indices != 0]
-        embedded[game_indices, ban_indices[ban_indices != 0] - 1 + self.num_champions * 2] = 1  # both pick indices are first, None pick (id 0) isn't possible
+        # write the patch
+        embedded[:, -2] = games[:, -2]
 
         # write ranked_score
         embedded[:, -1] = games[:, -1]
@@ -69,12 +67,12 @@ class ResNet60(nn.Module):
         super().__init__()
 
         self.linear_rank_merger = nn.Sequential(
-            nn.Linear(1, base_width),
+            nn.Linear(2, base_width),
             nn.ReLU(),
         )
 
         self.res_blocks_pre_rank = nn.Sequential(
-            nn.Linear(num_champions * 3, base_width),
+            nn.Linear(num_champions * 2, base_width),
             nn.ReLU(),
             *[ResBlock(base_width, bottleneck, dropout) for _ in range(pre_rank_blocks)],
         )
@@ -89,13 +87,13 @@ class ResNet60(nn.Module):
     def forward(self, X):
         # split out champions and ranks from embedding
         champs = X[:, :-2]
-        ranks = X[:, -1]
+        patches_and_ranks = X[:, -2:]
         
         # run champs through first blocks
         out = self.res_blocks_pre_rank(champs)
 
         # merge in the rank
-        out += self.linear_rank_merger(unsqueeze(ranks, 1))
+        out += self.linear_rank_merger(patches_and_ranks)
 
         # run through last blocks
         out = self.res_blocks_post_rank(out)

@@ -38,15 +38,17 @@ def read_dataset():
     ranked_scores = dataset["ranked_score"].to_numpy()
     ranked_scores = ranked_scores.reshape(-1, 1)
 
-    # load picks/bans into a numpy object (not array!!) which then has to be converted to python and back to an array
+    # load patches
+    patches = dataset["patch"].to_numpy()
+    patches = patches.reshape(-1, 1)
+
+    # load picks into a numpy object (not array!!) which then has to be converted to python and back to an array
     # (the only way D:)
     picks = dataset["picks"].to_numpy()
     picks = np.array(picks.tolist(), dtype=np.uint16)  # uint16 prevents overflows
-    bans = dataset["bans"].to_numpy()
-    bans = np.array(bans.tolist(), dtype=np.uint16)
 
     # concatenate all columns into games
-    games = np.concatenate((picks, bans, ranked_scores), axis=1)
+    games = np.concatenate((picks, patches, ranked_scores), axis=1)
 
     return games, wins
 
@@ -59,7 +61,7 @@ def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=Tr
     print(f"Loaded Dataset in {(time.time() - start):.1f} s")
 
     # initialize model
-    params = {"num_champions": 171, "base_width": 256, "bottleneck": 10, "dropout": 0.5, "pre_rank_blocks": 3, "post_rank_blocks": 6}
+    params = {"num_champions": 171, "base_width": 362, "bottleneck": 8, "dropout": 0.5, "pre_rank_blocks": 6, "post_rank_blocks": 8}
     model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
     # initialize embedder

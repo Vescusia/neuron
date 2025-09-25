@@ -1,11 +1,9 @@
 import click
 
-from analysis.draft_ml.train_model import train_model
-
 
 @click.group()
 @click.option("--dataset-path", type=click.Path(dir_okay=True, file_okay=False), default="./data/dataset", help="Path to the dataset (default: ./data/dataset)")
-def cli_group():
+def cli_group(dataset_path):
     """ML analysis tool for neuron datasets"""
     pass
 
@@ -27,4 +25,4 @@ def train_comp_model(batch_size, evaluate_every):
 
 
 if __name__ == "__main__":
-    train_model()
+    cli_group()
