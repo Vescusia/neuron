@@ -1,11 +1,12 @@
 import time
 from pathlib import Path
-from json import dumps
+import json
 
 from tqdm import tqdm
 import torch
 import sklearn
 import numpy as np
+import dill
 
 from .model import Embedder, ResNet60
 import lib.league_of_parquet as lop
@@ -61,7 +62,7 @@ def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=Tr
     print(f"Loaded Dataset in {(time.time() - start):.1f} s")
 
     # initialize model
-    params = {"num_champions": 171, "base_width": 362, "bottleneck": 8, "dropout": 0.5, "pre_rank_blocks": 6, "post_rank_blocks": 8}
+    params = {"num_champions": 171, "base_width": 256, "bottleneck": 5, "dropout": 0.0, "pre_rank_blocks": 2, "post_rank_blocks": 2}
     model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
     # initialize embedder
@@ -134,8 +135,8 @@ def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=Tr
                         report = (
                             f"\nhigh confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided"
                             f"\nloss since last report: {total_loss:.5f}"
-                            f"\nrough alpha: {model.get_parameter('res_blocks_post_rank.2.alpha').item():.5f}"
-                            f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}"
+                            f"\nrough alpha: {model.get_parameter('res_blocks_post_rank.1.alpha').item():.5f}"
+                            f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}; Report {len(reports)}"
                                   )
 
                         # save report and current model
@@ -161,14 +162,14 @@ def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=Tr
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
         # save model, embedder and params
-        with open(real_save_dir / "models.pt", "wb") as f:
-            torch.save(models, f)
+        with open(real_save_dir / "models.dill", "wb") as f:
+            dill.dump(models, f, recurse=True)
         with open(real_save_dir / "reports.txt", "w")  as f:
             f.writelines(reports)
-        with open(real_save_dir / "embedder.pt", "wb") as f:
-            torch.save(embedder, f)
+        with open(real_save_dir / "embedder.dill", "wb") as f:
+            dill.dump(embedder, f, recurse=True)
         with open(real_save_dir / "params.json", "w") as f:
-            f.write(dumps(params))
+            json.dump(params, f)
 
 
 if __name__ == "__main__":

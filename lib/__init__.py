@@ -20,9 +20,10 @@ CHAMPIONS = data_dragon.champions(version=LATEST_VERSION)['data']
 TIERS = ["IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"]
 DIVISIONS = ["I", "II", "III", "IV"]
 
+import lib.encoded_patch
+from .encoded_patch import ALL_PATCHES
 
 import lib.encoded_champ_id
 import lib.encoded_rank
 import lib.encoded_match_id
-import lib.encoded_patch
 import lib.league_of_parquet

@@ -17,17 +17,17 @@ def _canonize_patch(patch: str) -> str:
 
 
 # get all patches from data dragon
-_all_patches: list[str] = lib.data_dragon.versions_all()
+ALL_PATCHES: list[str] = lib.data_dragon.versions_all()
 # move the newest patches to the end of the list
-_all_patches.reverse()
+ALL_PATCHES.reverse()
 # remove the pre-season-3 patches (unique format and irrelevant)
-_all_patches = _all_patches[_all_patches.index('3.6.14'):]
+ALL_PATCHES = ALL_PATCHES[ALL_PATCHES.index('3.6.14'):]
 # reduce patch strings to only minor and major
-_all_patches = [_canonize_patch(patch) for patch in _all_patches]
+ALL_PATCHES = [_canonize_patch(patch) for patch in ALL_PATCHES]
 
 # create the patch-to-int map;
 # this has to be consistent
-_patch_to_int_map = {patch: uint16(i) for i, patch in enumerate(_all_patches)}
+_patch_to_int_map = {patch: uint16(i) for i, patch in enumerate(ALL_PATCHES)}
 # reverse the map
 _int_to_patch_map = {v: k for k, v in _patch_to_int_map.items()}
 
