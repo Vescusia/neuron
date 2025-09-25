@@ -44,27 +44,6 @@ class Embedder:
         self.scaler.fit(games)
 
 
-class LinearWide54(nn.Module):
-    def __init__(self, num_champions: int):
-        super().__init__()
-
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(num_champions * 3 + 1, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 512),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(512, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        logits = self.linear_relu_stack(x)
-        return logits
-
-
 class ResBlock(nn.Module):
     def __init__(self, in_out_features: int, bottleneck: int, dropout: float):
         super().__init__()
@@ -76,7 +55,6 @@ class ResBlock(nn.Module):
             nn.ReLU(),
             nn.Linear(bottleneck, in_out_features),
             nn.ReLU(),
-            nn.Dropout(dropout)
         )
 
     def forward(self, X):
@@ -90,26 +68,35 @@ class ResNet60(nn.Module):
     def __init__(self, num_champions: int, dropout: float, bottleneck: int, base_width: int, pre_rank_blocks: int, post_rank_blocks: int):
         super().__init__()
 
-        self.res_blocks_pre_rank = nn.Sequential(
-            nn.Linear(num_champions * 3, num_champions * 3),
+        self.linear_rank_merger = nn.Sequential(
+            nn.Linear(1, base_width),
             nn.ReLU(),
+        )
+
+        self.res_blocks_pre_rank = nn.Sequential(
             nn.Linear(num_champions * 3, base_width),
             nn.ReLU(),
             *[ResBlock(base_width, bottleneck, dropout) for _ in range(pre_rank_blocks)],
         )
 
         self.res_blocks_post_rank = nn.Sequential(
-            nn.Linear(base_width + 1, base_width),
-            nn.ReLU(),
             *[ResBlock(base_width, bottleneck, dropout) for _ in range(post_rank_blocks)],
+            nn.Dropout(dropout),
             nn.Linear(base_width, 1),
             nn.Sigmoid()
         )
 
     def forward(self, X):
+        # split out champions and ranks from embedding
         champs = X[:, :-2]
         ranks = X[:, -1]
+        
+        # run champs through first blocks
         out = self.res_blocks_pre_rank(champs)
-        X = cat([out, unsqueeze(ranks, 1)], dim=-1)
-        out = self.res_blocks_post_rank(X)
+
+        # merge in the rank
+        out += self.linear_rank_merger(unsqueeze(ranks, 1))
+
+        # run through last blocks
+        out = self.res_blocks_post_rank(out)
         return out

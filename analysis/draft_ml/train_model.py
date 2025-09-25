@@ -1,9 +1,12 @@
 from pathlib import Path
 import time
+from json import dumps
 
 import sklearn
 import torch
 import numpy as np
+from tqdm import tqdm
+from pyarrow import RecordBatch
 
 import lib.league_of_parquet as lop
 from .model import ResNet20,Embedder
@@ -25,31 +28,31 @@ else:
     print("No GPU available.")
     DEVICE = torch.device("cpu")
 
-
-# define indices of the beginning and end of the train and test sections
-NUM_TOTAL_GAMES = DATASET.count_rows()
-NUM_TEST_GAMES = NUM_TOTAL_GAMES // 10
 RNG = np.random.default_rng(int(time.time()))
 
 
-def take_random_games(num_games: int, train: bool):
-    # generate a selection of random rows within the train/test sections
-    row_indices = RNG.integers(low=NUM_TEST_GAMES if train else 0, high=NUM_TOTAL_GAMES if train else NUM_TEST_GAMES, size=num_games)
-
-    # take rows from the dataset
-    games = DATASET.take(row_indices)
+def parse_batch(batch: RecordBatch):
+    batch = batch.to_pandas()
 
     # load wins
-    wins = games['win'].to_numpy().astype(dtype=np.uint16)
+    wins = batch['win'].to_numpy().astype(dtype=np.uint16)
 
     # load ranked scores
-    ranked_scores = games['ranked_score'].to_numpy().astype(dtype=np.uint16)
+    ranked_scores = batch['ranked_score'].to_numpy().astype(dtype=np.uint16)
 
     # load picks
-    picks = np.array(games['picks'].to_numpy().tolist(), dtype=np.uint16)
+    picks = np.array(batch['picks'].to_numpy().tolist(), dtype=np.uint16)
 
     # load bans
-    bans = np.array(games['bans'].to_numpy().tolist(), dtype=np.uint16)
+    bans = np.array(batch['bans'].to_numpy().tolist(), dtype=np.uint16)
+
+    # shuffle them together
+    shuffle_indices = np.arange(len(batch))
+    RNG.shuffle(shuffle_indices)
+    wins = wins[shuffle_indices]
+    ranked_scores = ranked_scores[shuffle_indices]
+    picks = picks[shuffle_indices]
+    bans = bans[shuffle_indices]
 
     # repeat games by 5, as there are 5 picks per game
     wins = np.repeat(wins, 5, axis=0)
@@ -84,7 +87,7 @@ def take_random_games(num_games: int, train: bool):
     red_targets = red_targets[np.arange(len(red_targets)), np.tile(np.arange(5), len(red_targets) // 5)]
 
     # combine into one targets array
-    all_targets = np.empty(num_games * 5, dtype=np.int64)
+    all_targets = np.empty(len(batch) * 5, dtype=np.int64)
     all_targets[wins == 1] = blue_targets
     all_targets[wins == 0] = red_targets
     all_targets -= 1  # only no pick/ban is 0
@@ -110,14 +113,25 @@ def take_random_games(num_games: int, train: bool):
     return games, all_targets
 
 
-def train_model(batch_size: int = 10_000, evaluate_every: int = 10_000_000):
+def train_model(batch_size: int = 24_000, evaluate_every: int = 10_000_000, test_split: float = 0.1):
+    # determine batches that belong to training
+    num_test_games = int(DATASET.count_rows() * test_split)
+    num_test_batches = 0
+    for i, batch in enumerate(DATASET.to_batches()):
+        num_test_batches += len(batch)  # just use the test batches variable as temporary storage
+
+        if num_test_batches >= num_test_games:
+            num_test_batches = i
+            break
+
     # create model
-    params = {"num_champions": 171, "width": 128, "bottleneck": 5, "dropout": 0.1, "blocks_pre_win": 10, "blocks_pre_rank": 10, "blocks_post_rank": 20}
+    params = {"num_champions": 171, "width": 256, "bottleneck": 16, "dropout": 0.5, "blocks_pre_win": 4, "blocks_pre_rank": 4, "blocks_post_rank": 8}
     model = ResNet20(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
+
     # create embedder
     embedder = Embedder(params["num_champions"])
-    embedder.fit(take_random_games(batch_size, True)[0])
+    embedder.fit(parse_batch(DATASET.take(np.arange(batch_size)))[0])
 
     # store models and reports over time
     models = []
@@ -128,22 +142,26 @@ def train_model(batch_size: int = 10_000, evaluate_every: int = 10_000_000):
     loss_fn = torch.nn.NLLLoss()
 
     # train model
+    training_start = time.time()
     try:
-        games_trained = 0
+        drafts_trained = 0
         last_report = 0
         total_loss = 0
 
-        while True:
-            # get a macro batch of games (fewer, larger take_random_games calls are much, much faster,
-            #   but the embedding takes so much memory that it requires smaller batches)
-            start = time.time()
-            macro_games, macro_picks = take_random_games(batch_size * 10, True)
-            print(f"loading took {time.time() - start:.3f} s")
+        # initialize progress bar
+        bar = tqdm(total=evaluate_every)
+        bar.unit = " Draft-States"
 
-            for i in range(0, len(macro_games), batch_size):
+        while True:
+            for i, batch in enumerate(DATASET.to_batches(batch_size=batch_size)):
+                # skip over test batches
+                if i < num_test_batches:
+                    continue
+
                 # get a new batch
-                games, picks = macro_games[i:i + batch_size], macro_picks[i:i + batch_size]
-                games_trained += len(games)
+                games, picks = parse_batch(batch)
+                drafts_trained += len(games)
+                bar.update(len(games))
 
                 # embed the batch
                 games = embedder(games)
@@ -155,7 +173,7 @@ def train_model(batch_size: int = 10_000, evaluate_every: int = 10_000_000):
                 # calculate loss
                 picks = torch.from_numpy(picks).to(DEVICE)
                 loss = loss_fn(pred_picks, picks)
-                total_loss = loss.item()
+                total_loss += loss.item()
 
                 # backpropagate
                 loss.backward()
@@ -163,28 +181,48 @@ def train_model(batch_size: int = 10_000, evaluate_every: int = 10_000_000):
                 optim.step()
 
                 # evaluate every once in a while
-                if games_trained - last_report >= evaluate_every:
+                if drafts_trained - last_report >= evaluate_every:
+                    bar.reset(evaluate_every)
+                    bar.update(drafts_trained - evaluate_every - last_report)
+                    last_report = drafts_trained
                     model.eval()
+
                     with torch.no_grad():
-                        # get a new batch
-                        games, picks = take_random_games(batch_size, False)
-                        games_trained += len(games)
+                        # select a random batch from the test ones
+                        for test_batch, _ in zip(DATASET.to_batches(batch_size=batch_size), range(RNG.integers(low=0, high=num_test_batches))):
+                            pass
+
+                        # parse the batch
+                        games, picks = parse_batch(test_batch)
+                        drafts_trained += len(games)
 
                         # embed the batch
                         games = embedder(games)
                         games = torch.from_numpy(games).to(DEVICE)
 
                         # predict
-                        pred_picks = model(games)
-                        # take maximum argument as prediction
-                        pred_picks = torch.argmax(pred_picks, dim=1).cpu().numpy()
+                        pred_picks = model(games).cpu()
 
                         # report
-                        print(sklearn.metrics.classification_report(picks, pred_picks))
-                        print(f"total loss since last report: {total_loss}")
+                        print(f"\nTop-10 Accuracy: {sklearn.metrics.top_k_accuracy_score(picks, pred_picks, k=10):.2%}")
+                        print(f"total loss since last report: {total_loss:.5f}")
+                        print(f"{(time.time() - training_start) / 60:.2f} m; {drafts_trained // 5:_} games trained")
 
                     model.train()
                     total_loss = 0
 
+
     finally:
-        pass
+        # create a directory for the model, embedder and params within the main model directory
+        real_save_dir = MODEL_SAVE_DIR / f"{int(time.time())}"
+        real_save_dir.mkdir(parents=True, exist_ok=True)
+
+        # save model, embedder and params
+        with open(real_save_dir / "models.pt", "wb") as f:
+            torch.save(models, f)
+        with open(real_save_dir / "reports.txt", "w") as f:
+            f.writelines(reports)
+        with open(real_save_dir / "embedder.pt", "wb") as f:
+            torch.save(embedder, f)
+        with open(real_save_dir / "params.json", "w") as f:
+            f.write(dumps(params))

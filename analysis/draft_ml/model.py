@@ -49,12 +49,11 @@ class Embedder:
 
 class ResNet20(nn.Module):
     class ResBlock(nn.Module):
-        def __init__(self, in_out_features: int, bottleneck: int, dropout: float):
+        def __init__(self, in_out_features: int, bottleneck: int):
             super().__init__()
 
             self.alpha = nn.Parameter(tensor(0.))
 
-            self.dropout = nn.Dropout(dropout)
             self.linear_stack = nn.Sequential(
                 nn.Linear(in_out_features, bottleneck),
                 nn.ReLU(),
@@ -66,30 +65,35 @@ class ResNet20(nn.Module):
             residual = X
             out = self.linear_stack(X)
             out = out * self.alpha + residual
-            out = self.dropout(out)
             return out
 
     def __init__(self, num_champions: int, width: int, bottleneck: int, dropout: float, blocks_pre_win: int, blocks_pre_rank: int, blocks_post_rank: int):
         super().__init__()
 
+        self.linear_win_merger = nn.Sequential(
+            nn.Linear(1, width),
+            nn.ReLU(),
+        )
+
+        self.linear_rank_merger = nn.Sequential(
+            nn.Linear(1, width),
+            nn.ReLU(),
+        )
+
         self.res_blocks_pre_win = nn.Sequential(
             nn.Linear(num_champions * 3, width),
             nn.ReLU(),
-            *[self.ResBlock(width, bottleneck, dropout) for _ in range(blocks_pre_win)],
+            *[self.ResBlock(width, bottleneck) for _ in range(blocks_pre_win)],
         )
 
         self.res_blocks_pre_rank = nn.Sequential(
-            nn.Linear(width + 1, width),
-            nn.ReLU(),
-            *[self.ResBlock(width, width, dropout) for _ in range(blocks_pre_rank)],
+            *[self.ResBlock(width, width) for _ in range(blocks_pre_rank)],
         )
 
         self.res_blocks_post_rank = nn.Sequential(
-            nn.Linear(width + 1, width),
-            nn.ReLU(),
-            *[self.ResBlock(width, bottleneck, dropout) for _ in range(blocks_post_rank)],
+            *[self.ResBlock(width, bottleneck) for _ in range(blocks_post_rank)],
+            nn.Dropout(dropout),
             nn.Linear(width, num_champions),
-            nn.ReLU(),
             nn.LogSoftmax(dim=1)
         )
 
@@ -100,13 +104,13 @@ class ResNet20(nn.Module):
         wins = X[:, -1]
 
         out = self.res_blocks_pre_win(champs)
-
         # add wins
-        out = cat((out, unsqueeze(wins, 1)), dim=-1)
-        out = self.res_blocks_pre_rank(out)
+        out += self.linear_win_merger(unsqueeze(wins, 1))
 
+        out = self.res_blocks_pre_rank(out)
         # add ranks
-        out = cat((out, unsqueeze(ranks, 1)), dim=-1)
+        out += self.linear_rank_merger(unsqueeze(ranks, 1))
+
         out = self.res_blocks_post_rank(out)
 
         return out

@@ -7,7 +7,7 @@ import torch
 import sklearn
 import numpy as np
 
-from .model import Embedder, LinearWide54, ResNet60
+from .model import Embedder, ResNet60
 import lib.league_of_parquet as lop
 
 # load dataset
@@ -51,7 +51,7 @@ def read_dataset():
     return games, wins
 
 
-def train_model(batch_size=10_000, evaluate_every=10_000_000, save_all_models=True):
+def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=True):
     # read and split dataset
     start = time.time()
     train_games, train_wins = read_dataset()
@@ -59,7 +59,7 @@ def train_model(batch_size=10_000, evaluate_every=10_000_000, save_all_models=Tr
     print(f"Loaded Dataset in {(time.time() - start):.1f} s")
 
     # initialize model
-    params = {"num_champions": 171, "base_width": 64, "bottleneck": 10, "dropout": 0.1, "pre_rank_blocks": 10, "post_rank_blocks": 20}
+    params = {"num_champions": 171, "base_width": 256, "bottleneck": 10, "dropout": 0.5, "pre_rank_blocks": 3, "post_rank_blocks": 6}
     model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
     # initialize embedder
@@ -77,12 +77,17 @@ def train_model(batch_size=10_000, evaluate_every=10_000_000, save_all_models=Tr
     # train loop
     start = time.time()
     total_loss = 0.0
+    num_matches_seen_since_report = 0
     try:
         for epoch in range(1024):
-            # train model for this epoch
+            # split total dataset into batches
             batch_range = tqdm(range(0, len(train_games), batch_size))
             batch_range.set_description(f"EPOCH {epoch + 1}")
+
+            # train model for this epoch
             for i in batch_range:
+                num_matches_seen_since_report += batch_size
+
                 # get a batch of random games
                 games, wins = train_games[i:i + batch_size], train_wins[i:i + batch_size]
                 games = embedder(games)
@@ -91,17 +96,20 @@ def train_model(batch_size=10_000, evaluate_every=10_000_000, save_all_models=Tr
 
                 # predict win/lose
                 predicted_wins = torch.flatten(model(games))
+
                 # calculate loss
                 loss = loss_fn(predicted_wins, wins)
                 total_loss += loss.item()
+
                 # backpropagate
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-                if i % evaluate_every == 0 and i != 0:
-                    # evaluate model
+                if num_matches_seen_since_report >= evaluate_every:
                     model.eval()
+
+                    # evaluate model
                     with torch.no_grad():
                         # get a batch of random games
                         games, wins = test_games[0:batch_size], test_wins[0:batch_size]
@@ -123,7 +131,7 @@ def train_model(batch_size=10_000, evaluate_every=10_000_000, save_all_models=Tr
                         # build classification report
                         report = (
                             f"\nhigh confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided"
-                            f"\nloss since last report: {total_loss:.2f}"
+                            f"\nloss since last report: {total_loss:.5f}"
                             f"\nrough alpha: {model.get_parameter('res_blocks_post_rank.2.alpha').item():.5f}"
                             f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}"
                                   )
@@ -137,6 +145,7 @@ def train_model(batch_size=10_000, evaluate_every=10_000_000, save_all_models=Tr
 
                         print(report)
 
+                    num_matches_seen_since_report = 0
                     total_loss = 0.0
                     model.train()
 
