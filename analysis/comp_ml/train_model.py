@@ -1,6 +1,7 @@
 import time
 from pathlib import Path
 import json
+from copy import deepcopy
 
 from tqdm import tqdm
 import torch
@@ -62,7 +63,7 @@ def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=Tr
     print(f"Loaded Dataset in {(time.time() - start):.1f} s")
 
     # initialize model
-    params = {"num_champions": 171, "base_width": 256, "bottleneck": 5, "dropout": 0.0, "pre_rank_blocks": 2, "post_rank_blocks": 2}
+    params = {"num_champions": 171, "base_width": 420, "bottleneck": 10, "dropout": 0.5, "pre_rank_blocks": 10, "post_rank_blocks": 10}
     model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
     # initialize embedder
@@ -144,9 +145,9 @@ def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=Tr
                         # save report and current model
                         reports.append(report)
                         if save_all_models:
-                            models.append(model.cpu())
+                            models.append(deepcopy(model).cpu())
                         else:
-                            models[0] = model.cpu()
+                            models[0] = deepcopy(model).cpu()
 
                     num_matches_seen_since_report = 0
                     total_loss = 0.0

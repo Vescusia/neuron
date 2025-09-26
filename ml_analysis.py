@@ -24,7 +24,7 @@ def train_comp_model(batch_size, evaluate_every):
     train_model(batch_size=batch_size, evaluate_every=evaluate_every)
 
 
-@cli_group.command("comp_model")
+@cli_group.command("comp-model")
 @click.argument("model-path", type=click.Path(dir_okay=True, file_okay=False, exists=True))
 @click.argument("report-index", type=int, default=0)
 @click.argument("champions", nargs=10, type=click.Choice(lib.CHAMPIONS))
