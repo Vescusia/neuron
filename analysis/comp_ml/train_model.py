@@ -125,28 +125,28 @@ def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=Tr
 
                         # select the high-confidence predictions
                         high_conf_pred = np.concatenate((predicted_wins[predicted_wins > 0.60], predicted_wins[predicted_wins < 0.4]))
-                        high_conf_targets = np.concatenate((wins[predicted_wins > 0.60], wins[predicted_wins < 0.4]))
+                        high_conf_wins = np.concatenate((wins[predicted_wins > 0.60], wins[predicted_wins < 0.4]))
 
                         # score the high-confidence predictions
-                        high_conf_accuracy = sklearn.metrics.accuracy_score(high_conf_targets, np.round(high_conf_pred))
+                        high_conf_accuracy = sklearn.metrics.accuracy_score(high_conf_wins, np.round(high_conf_pred))
                         undecided = (len(predicted_wins) - len(high_conf_pred)) / len(predicted_wins)
 
                         # build classification report
                         report = (
+                            f"\ngeneral accuracy: {sklearn.metrics.accuracy_score(wins, np.round(predicted_wins)):.2%}"
                             f"\nhigh confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided"
                             f"\nloss since last report: {total_loss:.5f}"
                             f"\nrough alpha: {model.get_parameter('res_blocks_post_rank.1.alpha').item():.5f}"
                             f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}; Report {len(reports)}"
                                   )
+                        print(report)
 
                         # save report and current model
                         reports.append(report)
                         if save_all_models:
-                            models.append(np.copy(model))
+                            models.append(model.cpu())
                         else:
-                            models[0] = np.copy(model)
-
-                        print(report)
+                            models[0] = model.cpu()
 
                     num_matches_seen_since_report = 0
                     total_loss = 0.0
@@ -164,7 +164,7 @@ def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=Tr
         # save model, embedder and params
         with open(real_save_dir / "models.dill", "wb") as f:
             dill.dump(models, f, recurse=True)
-        with open(real_save_dir / "reports.txt", "w")  as f:
+        with open(real_save_dir / "reports.txt", "w") as f:
             f.writelines(reports)
         with open(real_save_dir / "embedder.dill", "wb") as f:
             dill.dump(embedder, f, recurse=True)
