@@ -10,7 +10,7 @@ class Embedder:
 
     def embed_games(self, games, scale: bool = True):
         # create 2d array for the embedded game
-        embedded = np.zeros((len(games), self.num_champions * 2 + 1 + 1), dtype=np.float32)
+        embedded = np.zeros((len(games), self.num_champions * 2 + 1), dtype=np.float32)
 
         # encode blue side picks
         game_indices = np.arange(len(games))
@@ -21,9 +21,6 @@ class Embedder:
         game_indices = np.arange(len(games))
         pick_indices = games[:, 5:10] - 1 + self.num_champions  # pick indices are first, None pick (id 0) isn't possible
         embedded[game_indices.repeat(5), pick_indices.ravel()] = 1
-
-        # write the patch
-        embedded[:, -2] = games[:, -2]
 
         # write ranked_score
         embedded[:, -1] = games[:, -1]
@@ -67,7 +64,7 @@ class ResNet60(nn.Module):
         super().__init__()
 
         self.linear_rank_merger = nn.Sequential(
-            nn.Linear(2, base_width),
+            nn.Linear(1, base_width),
             nn.ReLU(),
         )
 
@@ -86,14 +83,14 @@ class ResNet60(nn.Module):
 
     def forward(self, X):
         # split out champions and ranks from embedding
-        champs = X[:, :-2]
-        patches_and_ranks = X[:, -2:]
+        champs = X[:, :-1]
+        ranks = X[:, -1]
         
         # run champs through first blocks
         out = self.res_blocks_pre_rank(champs)
 
         # merge in the rank
-        out += self.linear_rank_merger(patches_and_ranks)
+        out += self.linear_rank_merger(unsqueeze(ranks, 1))
 
         # run through last blocks
         out = self.res_blocks_post_rank(out)

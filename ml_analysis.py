@@ -8,11 +8,15 @@ import dill
 import lib
 
 
+_DATASET_PATH: str | None = None
+
+
 @click.group()
 @click.option("--dataset-path", type=click.Path(dir_okay=True, file_okay=False), default="./data/dataset", help="Path to the dataset (default: ./data/dataset)")
 def cli_group(dataset_path):
     """ML analysis tool for neuron datasets"""
-    pass
+    global _DATASET_PATH
+    _DATASET_PATH = dataset_path
 
 
 @cli_group.command("train-comp-model")
@@ -21,7 +25,7 @@ def cli_group(dataset_path):
 def train_comp_model(batch_size, evaluate_every):
     """Train the comp model; models will be saved to ./analysis/comp_ml/models"""
     from analysis.comp_ml.train_model import train_model
-    train_model(batch_size=batch_size, evaluate_every=evaluate_every)
+    train_model(dataset_path=_DATASET_PATH, batch_size=batch_size, evaluate_every=evaluate_every)
 
 
 @cli_group.command("comp-model")

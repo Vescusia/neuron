@@ -12,11 +12,6 @@ import dill
 from .model import Embedder, ResNet60
 import lib.league_of_parquet as lop
 
-# load dataset
-DATASET_PATH = Path("./data/dataset")
-print(f"Opening Dataset from {DATASET_PATH}")
-DATASET = lop.open_dataset(DATASET_PATH)
-
 # define save directory for the model
 MODEL_SAVE_DIR = Path("./analysis/comp_ml/models")
 
@@ -29,9 +24,13 @@ else:
     DEVICE = torch.device("cpu")
 
 
-def read_dataset():
-    # convert pyarrow dataset to row-based pandas dataframe
-    dataset = DATASET.to_table()
+def read_dataset(dataset_path: str):
+    # open dataset
+    print(f"Opening Dataset from {dataset_path}")
+    dataset = lop.open_dataset(dataset_path)
+
+    # load full pyarrow dataset into a table
+    dataset = dataset.to_table()
 
     # load wins into a numpy array
     wins = dataset["win"].to_numpy().astype(dtype=np.float32)
@@ -40,30 +39,30 @@ def read_dataset():
     ranked_scores = dataset["ranked_score"].to_numpy()
     ranked_scores = ranked_scores.reshape(-1, 1)
 
-    # load patches
-    patches = dataset["patch"].to_numpy()
-    patches = patches.reshape(-1, 1)
-
     # load picks into a numpy object (not array!!) which then has to be converted to python and back to an array
     # (the only way D:)
     picks = dataset["picks"].to_numpy()
     picks = np.array(picks.tolist(), dtype=np.uint16)  # uint16 prevents overflows
 
-    # concatenate all columns into games
-    games = np.concatenate((picks, patches, ranked_scores), axis=1)
+    # concatenate picks and ranked scores into games
+    games = np.concatenate((picks, ranked_scores), axis=1)
 
     return games, wins
 
 
-def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=True):
-    # read and split dataset
+def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000, save_all_models=True):
+    # open and load dataset
     start = time.time()
-    train_games, train_wins = read_dataset()
-    train_games, test_games, train_wins, test_wins = sklearn.model_selection.train_test_split(train_games, train_wins, test_size=0.10)
+    train_games, train_wins = read_dataset(dataset_path)
     print(f"Loaded Dataset in {(time.time() - start):.1f} s")
 
+    # split dataset
+    start = time.time()
+    train_games, test_games, train_wins, test_wins = sklearn.model_selection.train_test_split(train_games, train_wins, test_size=0.10)
+    print(f"Split Dataset in {(time.time() - start):.1f} s")
+
     # initialize model
-    params = {"num_champions": 171, "base_width": 420, "bottleneck": 10, "dropout": 0.5, "pre_rank_blocks": 10, "post_rank_blocks": 10}
+    params = {"num_champions": 171, "base_width": 512, "bottleneck": 10, "dropout": 0.5, "pre_rank_blocks": 12, "post_rank_blocks": 12}
     model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
     # initialize embedder
@@ -171,7 +170,3 @@ def train_model(batch_size=50_000, evaluate_every=10_000_000, save_all_models=Tr
             dill.dump(embedder, f, recurse=True)
         with open(real_save_dir / "params.json", "w") as f:
             json.dump(params, f)
-
-
-if __name__ == "__main__":
-    train_model()
