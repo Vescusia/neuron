@@ -40,7 +40,7 @@ class Embedder:
 
 
 class ResBlock(nn.Module):
-    def __init__(self, in_out_features: int, bottleneck: int, dropout: float):
+    def __init__(self, in_out_features: int, bottleneck: int):
         super().__init__()
 
         self.alpha = nn.Parameter(tensor(0.))
@@ -60,38 +60,69 @@ class ResBlock(nn.Module):
 
 
 class ResNet60(nn.Module):
-    def __init__(self, num_champions: int, dropout: float, bottleneck: int, base_width: int, pre_rank_blocks: int, post_rank_blocks: int):
+    def __init__(self, num_champions: int, dropout: float, bottleneck: int, base_width: int, separate_comp_blocks: int, pre_rank_blocks: int, post_rank_blocks: int):
         super().__init__()
+        self.num_champions = num_champions
 
+        # separate comp blocks
+        self.res_blocks_bs, self.res_blocks_rs = [nn.Sequential(
+            nn.Linear(num_champions, base_width),
+            nn.ReLU(),
+            *[ResBlock(base_width, bottleneck) for _ in range(separate_comp_blocks)],
+        ) for _ in range(2)]
+
+        # linear layer for merging both base_width's of the separate comp blocks to one base_width
+        self.linear_comp_merger = nn.Sequential(
+            nn.Linear(base_width * 2, base_width),
+            nn.ReLU(),
+        )
+
+        # combined comp blocks before merging in the rank
+        self.res_blocks_pre_rank = nn.Sequential(
+            *[ResBlock(base_width, bottleneck) for _ in range(pre_rank_blocks)],
+        )
+
+        # linear layer for exploding the rank to base_width
         self.linear_rank_merger = nn.Sequential(
             nn.Linear(1, base_width),
             nn.ReLU(),
         )
 
-        self.res_blocks_pre_rank = nn.Sequential(
-            nn.Linear(num_champions * 2, base_width),
-            nn.ReLU(),
-            *[ResBlock(base_width, bottleneck, dropout) for _ in range(pre_rank_blocks)],
+        # combined comp blocks after merging in the rank
+        self.res_blocks_post_rank = nn.Sequential(
+            *[ResBlock(base_width, bottleneck) for _ in range(post_rank_blocks)],
+            nn.Dropout(dropout),
         )
 
-        self.res_blocks_post_rank = nn.Sequential(
-            *[ResBlock(base_width, bottleneck, dropout) for _ in range(post_rank_blocks)],
-            nn.Dropout(dropout),
+        # sigmoid
+        self.sigmoid = nn.Sequential(
             nn.Linear(base_width, 1),
             nn.Sigmoid()
         )
 
     def forward(self, X):
-        # split out champions and ranks from embedding
-        champs = X[:, :-1]
+        # split out blue side and red side picks as well as the ranked scores
+        bs_picks = X[:, :self.num_champions]
+        rs_picks = X[:, self.num_champions:-1]
         ranks = X[:, -1]
-        
-        # run champs through first blocks
-        out = self.res_blocks_pre_rank(champs)
 
-        # merge in the rank
+        # analyse comps separately
+        bs_out = self.res_blocks_bs(bs_picks)
+        rs_out = self.res_blocks_rs(rs_picks)
+
+        # merge both comps
+        out = self.linear_comp_merger(cat((bs_out, rs_out), dim=1))
+
+        # analyse both comps
+        out = self.res_blocks_pre_rank(out)
+
+        # merge in the ranked score
         out += self.linear_rank_merger(unsqueeze(ranks, 1))
 
-        # run through last blocks
+        # analyse both comps with ranked score
         out = self.res_blocks_post_rank(out)
+
+        # sigmoid
+        out = self.sigmoid(out)
+
         return out

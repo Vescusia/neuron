@@ -62,12 +62,12 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000,
     print(f"Split Dataset in {(time.time() - start):.1f} s")
 
     # initialize model
-    params = {"num_champions": 171, "base_width": 512, "bottleneck": 10, "dropout": 0.5, "pre_rank_blocks": 12, "post_rank_blocks": 12}
+    params = {"num_champions": 171, "base_width": 256, "bottleneck": 8, "dropout": 0.5, "separate_comp_blocks": 6, "pre_rank_blocks": 6, "post_rank_blocks": 10}
     model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
     # initialize embedder
     embedder = Embedder(params["num_champions"])
-    embedder.fit(test_games[0:batch_size])
+    embedder.fit(train_games[0:batch_size])
 
     # initialize optimizer and loss
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -75,7 +75,7 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000,
 
     # keep track of confidence reports and model states for saving the optimum model
     models = []
-    reports = []
+    reports = [f"{model}\n", f"{sum(p.numel() for p in model.parameters()):_} parameters\n"]
 
     # train loop
     start = time.time()
@@ -86,6 +86,7 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000,
             # split total dataset into batches
             batch_range = tqdm(range(0, len(train_games), batch_size))
             batch_range.set_description(f"EPOCH {epoch + 1}")
+            batch_range.unit = " batches"
 
             # train model for this epoch
             for i in batch_range:
@@ -161,12 +162,15 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000,
         real_save_dir = MODEL_SAVE_DIR / f"{int(time.time())}"
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
-        # save model, embedder and params
+        # save model
         with open(real_save_dir / "models.dill", "wb") as f:
             dill.dump(models, f, recurse=True)
+        # save reports
         with open(real_save_dir / "reports.txt", "w") as f:
             f.writelines(reports)
+        # save embedder
         with open(real_save_dir / "embedder.dill", "wb") as f:
             dill.dump(embedder, f, recurse=True)
+        # save params
         with open(real_save_dir / "params.json", "w") as f:
             json.dump(params, f)
