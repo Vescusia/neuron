@@ -8,13 +8,13 @@ import requests
 import riotwatcher as rw
 
 import lib
-from lib.league_of_parquet import ContinentDatasetWriter
+import lib.league_of_parquet as lop
 from .continent_db import MatchDB, SummonerDB
 from .compressed_json_ball import CompressedJSONBall
 from .reqtimecalc import ReqTimeCalc
 
 
-def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, ds_writer: ContinentDatasetWriter, lolwatcher: rw.LolWatcher) -> None:
+def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_db: SummonerDB, matches_path: Path, ds_writer: lop.ContinentDatasetWriter, lolwatcher: rw.LolWatcher) -> None:
     # define the continent we are crawling by copying the one from the continent-specific match database
     continent = match_db.continent
 
@@ -58,7 +58,19 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
                             raise e
 
                     # add match to dataset
-                    ds_writer.append(new_match, ranked_score)
+                    try:
+                        ds_writer.write_match(new_match, ranked_score)
+                    # catch match not having a version (happens sometimes)
+                    except lop.WriteError.MissingVersion:
+                        print(f"\n[ERROR {continent}] Match {match_id} has no version, skipping...\n")
+                    # catch match having an invalid champion id (also happens)
+                    except lop.WriteError.InvalidChampionID as e:
+                        print(f"\n[ERROR {continent}] Match {match_id} has an invalid champion id, skipping...\n")
+                        traceback.print_exception(e)
+                        new_match = lolwatcher.match.by_id(continent, match_id)
+                        print(new_match[new_match['info']['teams'][0]['bans']])
+                        print(new_match[new_match['info']['teams'][1]['bans']])
+                        print("\n")
 
                     # save match JSON
                     matches_ball.append(new_match)

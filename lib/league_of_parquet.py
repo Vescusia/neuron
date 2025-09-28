@@ -10,6 +10,22 @@ import pyarrow.parquet as pq
 import lib
 
 
+class WriteError:
+    class MissingVersion(Exception):
+        """
+        Match does not contain a game version (['info']['gameVersion']).
+        """
+        def __init__(self):
+            pass
+
+    class InvalidChampionID(Exception):
+        """
+        The 'championId' of a participant does not match any champion.
+        """
+        def __init__(self, message):
+            self.message = message
+
+
 schema = pa.schema(
             [
                 ("patch", pa.uint16()),
@@ -36,18 +52,15 @@ class ContinentDatasetWriter:
         # create the match list for the write_interval
         self.match_list = []
 
-    def append(self, match: dict, ranked_score: uint8):
+    def write_match(self, match: dict, ranked_score: uint8) -> None | WriteError:
         """
-        Append a match to the table.
+        Add a match to the cached table.
         Once the table has reached a certain size (write_interval in LolDataset), it will be written to disk.
         """
         # encode patch
         patch = match['info']['gameVersion']
         if not patch:
-            # sometimes, something goes wrong and the gameVersion simply is null.
-            # ignore it
-            print(f"{match['metadata']['matchId']} has no patch/gameVersion. ignoring...")
-            return
+            raise WriteError.MissingVersion
         encoded_patch = lib.encoded_patch.to_int(patch)
 
         # extract if the blue side won
@@ -59,14 +72,23 @@ class ContinentDatasetWriter:
         bans.extend(match['info']['teams'][1]['bans'])
         # sort them by pick order
         bans.sort(key=lambda ban: ban['pickTurn'])
-        # map to encoded champions
-        encoded_bans = [lib.encoded_champ_id.to_int(ban['championId']) for ban in bans]
+
+        # encode bans to u8
+        try:
+            encoded_bans = [lib.encoded_champ_id.to_int(ban['championId']) for ban in bans]
+        except KeyError as e:
+            raise WriteError.InvalidChampionID(str(e))
 
         # extract the picked champions
         # there seems to be no indication for pick order other than... participant order?
         picks = match['info']['participants']
         picks = [participant['championId'] for participant in picks]
-        encoded_picks = [lib.encoded_champ_id.to_int(pick) for pick in picks]
+
+        # encode picks to u8
+        try:
+            encoded_picks = [lib.encoded_champ_id.to_int(pick) for pick in picks]
+        except KeyError as e:
+            raise WriteError.InvalidChampionID(str(e))
 
         # map to schema
         row = [encoded_patch, ranked_score, win] + [encoded_picks] + [encoded_bans]
