@@ -91,7 +91,7 @@ class ContinentDatasetWriter:
             raise WriteError.InvalidChampionID(str(e))
 
         # map to schema
-        row = [encoded_patch, ranked_score, win] + [encoded_picks] + [encoded_bans]
+        row = [encoded_patch, ranked_score, win, encoded_picks, encoded_bans]
         row = {schema.field(i).name: col for i, col in enumerate(row)}
 
         # append row to the match list

@@ -30,12 +30,10 @@ def train_comp_model(batch_size, evaluate_every):
 
 @cli_group.command("comp-model")
 @click.argument("model-path", type=click.Path(dir_okay=True, file_okay=False, exists=True))
-@click.argument("report-index", type=int, default=0)
+@click.argument("report-index", type=int)
 @click.argument("champions", nargs=10, type=click.Choice(lib.CHAMPIONS))
 @click.argument("patch", type=click.Choice(lib.ALL_PATCHES))
-@click.argument("tier", type=click.Choice(lib.TIERS))
-@click.option("--division", type=click.Choice(lib.DIVISIONS), default=lib.DIVISIONS[0])
-def use_comp_model(model_path, report_index, champions, patch, tier, division):
+def use_comp_model(model_path, report_index, champions, patch):
     model_path = Path(model_path)
 
     # open and load models
@@ -50,7 +48,7 @@ def use_comp_model(model_path, report_index, champions, patch, tier, division):
 
     # encode champions, patch and rank
     champions = [lib.encoded_champ_id.name_to_int(champ) for champ in champions]
-    game = np.array(champions + [lib.encoded_patch.to_int(patch), lib.encoded_rank.to_int(tier, division)], dtype=np.uint16).reshape((1, -1))
+    game = np.array(champions + [lib.encoded_patch.to_int(patch)], dtype=np.uint16).reshape((1, -1))
 
     # embed game
     game = embedder(game)
