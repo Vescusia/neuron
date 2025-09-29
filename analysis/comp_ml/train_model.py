@@ -1,16 +1,15 @@
 import time
 from pathlib import Path
 import json
-from copy import deepcopy
 
 from tqdm import tqdm
 import torch
 import sklearn
 import numpy as np
-import dill
 
 from .model import Embedder, ResNet60
 import lib.league_of_parquet as lop
+from analysis import ml_lib
 
 # define save directory for the model
 MODEL_SAVE_DIR = Path("./analysis/comp_ml/models")
@@ -50,7 +49,7 @@ def read_dataset(dataset_path: str):
     return games, wins
 
 
-def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000, save_all_models=True):
+def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000):
     # open and load dataset
     start = time.time()
     train_games, train_wins = read_dataset(dataset_path)
@@ -62,7 +61,7 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000,
     print(f"Split Dataset in {(time.time() - start):.1f} s")
 
     # initialize model
-    params = {"num_champions": 171, "base_width": 256, "bottleneck": 8, "dropout": 0.5, "separate_comp_blocks": 6, "pre_rank_blocks": 6, "post_rank_blocks": 10}
+    params = {"num_champions": 171, "base_width": 256, "bottleneck": 8, "dropout": 0.5, "separate_comp_blocks": 4, "pre_rank_blocks": 6, "post_rank_blocks": 6}
     model = ResNet60(**params).to(DEVICE)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
     # initialize embedder
@@ -138,16 +137,13 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000,
                             f"\nhigh confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided"
                             f"\nloss since last report: {total_loss:.5f}"
                             f"\nrough alpha: {model.get_parameter('res_blocks_post_rank.1.alpha').item():.5f}"
-                            f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}; Report {len(reports)}"
+                            f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}; Report {len(models)}"
                                   )
                         print(report)
 
                         # save report and current model
                         reports.append(report)
-                        if save_all_models:
-                            models.append(deepcopy(model).cpu())
-                        else:
-                            models[0] = deepcopy(model).cpu()
+                        models.append(model.state_dict())
 
                     num_matches_seen_since_report = 0
                     total_loss = 0.0
@@ -163,14 +159,12 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000,
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
         # save model
-        with open(real_save_dir / "models.dill", "wb") as f:
-            dill.dump(models, f, recurse=True)
-        # save reports
-        with open(real_save_dir / "reports.txt", "w") as f:
-            f.writelines(reports)
+        ml_lib.save_model(model.cpu(), params, models, real_save_dir / "models.dill")
         # save embedder
-        with open(real_save_dir / "embedder.dill", "wb") as f:
-            dill.dump(embedder, f, recurse=True)
+        ml_lib.save_embedder(embedder, real_save_dir / "embedder.dill")
         # save params
         with open(real_save_dir / "params.json", "w") as f:
             json.dump(params, f)
+        # save reports
+        with open(real_save_dir / "reports.txt", "w") as f:
+            f.writelines(reports)

@@ -1,4 +1,4 @@
-from torch import tensor, nn, cat, unsqueeze
+from torch import tensor, nn, unsqueeze
 import sklearn
 import numpy as np
 
@@ -19,7 +19,7 @@ class Embedder:
 
         # encode red side picks
         game_indices = np.arange(len(games))
-        pick_indices = games[:, 5:10] - 1 + self.num_champions  # pick indices are first, None pick (id 0) isn't possible
+        pick_indices = games[:, 5:10] - 1 + self.num_champions  # bs picks come first, None pick isn't possible
         embedded[game_indices.repeat(5), pick_indices.ravel()] = 1
 
         # write ranked_score
@@ -73,7 +73,7 @@ class ResNet60(nn.Module):
 
         # linear layer for merging both base_width's of the separate comp blocks to one base_width
         self.linear_comp_merger = nn.Sequential(
-            nn.Linear(base_width * 2, base_width),
+            nn.Linear(base_width, base_width),
             nn.ReLU(),
         )
 
@@ -106,20 +106,20 @@ class ResNet60(nn.Module):
         rs_picks = X[:, self.num_champions:-1]
         ranks = X[:, -1]
 
-        # analyse comps separately
+        # analyze comps separately
         bs_out = self.res_blocks_bs(bs_picks)
         rs_out = self.res_blocks_rs(rs_picks)
 
         # merge both comps
-        out = self.linear_comp_merger(cat((bs_out, rs_out), dim=1))
+        out = self.linear_comp_merger(bs_out + rs_out)
 
-        # analyse both comps
+        # analyze both comps
         out = self.res_blocks_pre_rank(out)
 
         # merge in the ranked score
         out += self.linear_rank_merger(unsqueeze(ranks, 1))
 
-        # analyse both comps with ranked score
+        # analyze both comps with ranked score
         out = self.res_blocks_post_rank(out)
 
         # sigmoid

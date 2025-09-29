@@ -6,6 +6,7 @@ import numpy as np
 import dill
 
 import lib
+from analysis import ml_lib
 
 
 _DATASET_PATH: str | None = None
@@ -30,33 +31,29 @@ def train_comp_model(batch_size, evaluate_every):
 
 @cli_group.command("comp-model")
 @click.argument("model-path", type=click.Path(dir_okay=True, file_okay=False, exists=True))
-@click.argument("report-index", type=int)
+@click.option("--report-index", type=int, default=-1, help="Index of the report state to load (default: -1)")
 @click.argument("champions", nargs=10, type=click.Choice(lib.CHAMPIONS))
-@click.argument("patch", type=click.Choice(lib.ALL_PATCHES))
-def use_comp_model(model_path, report_index, champions, patch):
+@click.argument("tier", type=click.Choice(lib.TIERS))
+@click.option("--division", type=click.Choice(lib.DIVISIONS), default=lib.DIVISIONS[0])
+def use_comp_model(model_path, report_index, champions, tier, division):
     model_path = Path(model_path)
 
     # open and load models
-    with open(model_path / "models.dill", "rb") as f:
-        models = dill.load(f)
+    model = ml_lib.load_model(model_path / "models.dill", state_dict_index=report_index)
+    model.eval()
     click.echo(f"Comp models loaded from {model_path}")
 
     # open and load embedder
-    with open(model_path / "embedder.dill", "rb") as f:
-        embedder = dill.load(f)
+    embedder = ml_lib.load_embedder(model_path / "embedder.dill")
     click.echo(f"Embedder loaded from {model_path}")
 
     # encode champions, patch and rank
     champions = [lib.encoded_champ_id.name_to_int(champ) for champ in champions]
-    game = np.array(champions + [lib.encoded_patch.to_int(patch)], dtype=np.uint16).reshape((1, -1))
+    game = np.array(champions + [lib.encoded_rank.to_int(tier, division)], dtype=np.uint16).reshape((1, -1))
 
     # embed game
     game = embedder(game)
     game = torch.from_numpy(game)
-
-    # select model
-    model = models[report_index]
-    model.eval()
 
     # predict
     with torch.no_grad():
