@@ -3,7 +3,6 @@ from pathlib import Path
 import click
 import torch
 import numpy as np
-import dill
 
 import lib
 from analysis import ml_lib
@@ -22,7 +21,7 @@ def cli_group(dataset_path):
 
 @cli_group.command("train-comp-model")
 @click.option("--batch-size", type=int, default=50_000, help="Game batch size for training (default: 50,000)")
-@click.option("--evaluate-every", type=int, default=10_000_000, help="Evaluate every n games (default: 10,000,000)")
+@click.option("--evaluate-every", type=int, default=2, help="Evaluate every n games (default: 10,000,000)")
 def train_comp_model(batch_size, evaluate_every):
     """Train the comp model; models will be saved to ./analysis/comp_ml/models"""
     from analysis.comp_ml.train_model import train_model
@@ -44,7 +43,7 @@ def use_comp_model(model_path, report_index, champions, tier, division):
     click.echo(f"Comp models loaded from {model_path}")
 
     # open and load embedder
-    embedder = ml_lib.load_embedder(model_path / "embedder.dill")
+    embedder = ml_lib.Embedder.load(model_path / "embedder.dill")
     click.echo(f"Embedder loaded from {model_path}")
 
     # encode champions, patch and rank

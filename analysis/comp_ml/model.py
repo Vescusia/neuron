@@ -2,13 +2,14 @@ from torch import tensor, nn, unsqueeze
 import sklearn
 import numpy as np
 
+from analysis import ml_lib
 
-class Embedder:
+
+class CompEmbedder(ml_lib.Embedder):
     def __init__(self, num_champions: int):
         self.num_champions = num_champions
-        self.scaler = sklearn.preprocessing.StandardScaler()
 
-    def embed_games(self, games, scale: bool = True):
+    def embed(self, games):
         # create 2d array for the embedded game
         embedded = np.zeros((len(games), self.num_champions * 2 + 1), dtype=np.float32)
 
@@ -25,18 +26,7 @@ class Embedder:
         # write ranked_score
         embedded[:, -1] = games[:, -1]
 
-        # standard scale the whole embedding if desired
-        if scale:
-            embedded = self.scaler.transform(embedded)
-
         return embedded
-
-    def __call__(self, games):
-        return self.embed_games(games)
-
-    def fit(self, games):
-        games = self.embed_games(games, scale=False)
-        self.scaler.fit(games)
 
 
 class ResBlock(nn.Module):

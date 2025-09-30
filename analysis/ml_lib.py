@@ -1,8 +1,9 @@
 import inspect
+from pathlib import Path
 
+import sklearn
 import torch
 import dill
-from pandas.tseries.holiday import next_monday
 
 
 def save_model(model: torch.nn.Module, model_kwargs: dict | None, state_dicts: list[dict], path):
@@ -38,6 +39,7 @@ def load_model(path, state_dict_index: int = -1) -> torch.nn.Module:
     source = model_dict["source"]
     # execute the source code
     # DANGEROUS!!!
+    input(f"[WARNING - Input Required] Loading Model from {path}. This may execute arbitrary code. Please only continue (<ENTER>) if you trust this File. (<CTRL-C> to abort)")
     namespace = {}
     exec(source, namespace)
 
@@ -54,23 +56,79 @@ def load_model(path, state_dict_index: int = -1) -> torch.nn.Module:
     return model
 
 
-def save_embedder(embedder: object, path):
-    with open(path, "wb") as f:
-        dill.dump({
-            "source": dill.source.getsource(dill.source.getmodule(embedder)),
-            "embedder": embedder,
-        }, f)
+class Embedder:
+    """
+    Embedder superclass. Subclasses only have to implement the `embed` method. Scaler has to be fitted using `.fit`.
+    Calling convention is `__call__`.
+    """
+    def fit(self, games) -> None:
+        games = self.embed(games)
+        try:
+            self._scaler.fit(games)
+        except AttributeError:
+            self._scaler = sklearn.preprocessing.StandardScaler()
+            self._scaler.fit(games)
 
+    @staticmethod
+    def load(path: str | Path):
+        # load Embedder dict from file
+        with open(path, "rb") as f:
+            embedder_dict = dill.load(f)
 
-def load_embedder(path) -> object:
-    with open(path, "rb") as f:
-        embedder_dict = dill.load(f)
+        # execute source code of saved Embedder
+        # DANGEROUS!!
+        namespace = {}
+        input(f"[WARNING - Input Required] Loading Embedder from {path}. This may execute arbitrary code. Please only continue (<ENTER>) if you trust this File. (<CTRL-C> to abort)")
+        exec(embedder_dict["source"], namespace)
 
-    # load source code
-    # DANGEROUS!!
-    exec(embedder_dict["source"])
+        # instantiate the embedder from the namespace
+        embedder_class = namespace[embedder_dict["name"]]
+        embedder: Embedder = embedder_class(**embedder_dict["kwargs"])
 
-    # reload embedder now that the class is in the current frame
-    with open(path, "rb") as f:
-        embedder_dict = dill.load(f)
-    return embedder_dict["embedder"]
+        # set scaler state
+        embedder._scaler = sklearn.preprocessing.StandardScaler()
+        embedder._scaler.__setstate__(embedder_dict["state"])
+
+        return embedder
+
+    def save(self, path: str | Path, embedder_kwargs: dict | None) -> None:
+        try:
+            # get the state of the scaler
+            state = self._scaler.__getstate__()
+
+            # get the source code for the subclass
+            source = dill.source.getsource(dill.source.getmodule(self))
+
+            # save to file
+            with open(path, "wb") as f:
+                dill.dump(
+                    {
+                        "source": source,
+                        "name": self.__class__.__name__,
+                        "state": state,
+                        "kwargs": embedder_kwargs if embedder_kwargs is not None else {},
+                    }, f)
+
+        except AttributeError:
+            raise AttributeError("Scaler not fitted yet, please call self.fit first!")
+
+    def _transform(self, embedded_games):
+        """
+        Transform embedded games.
+        self.fit has to be called before this function!
+        :return: The transformed games.
+        """
+        try:
+            return self._scaler.transform(embedded_games)
+        except AttributeError:
+            raise AttributeError("Scaler not fitted yet, please call self.fit first!")
+
+    def embed(self, games):
+        """
+        Returns a 2d array of embedded games.
+        Do not use the scaler (self._transform) in this method.
+        """
+        raise NotImplementedError("Please implement this method in your subclass!")
+
+    def __call__(self, games):
+        return self._transform(self.embed(games))

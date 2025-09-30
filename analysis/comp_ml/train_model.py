@@ -2,25 +2,17 @@ import time
 from pathlib import Path
 import json
 
-from tqdm import tqdm
 import torch
 import sklearn
 import numpy as np
+from tqdm import tqdm
 
-from .model import Embedder, ResNet60
+from .model import CompEmbedder, ResNet60
 import lib.league_of_parquet as lop
 from analysis import ml_lib
 
 # define save directory for the model
-MODEL_SAVE_DIR = Path("./analysis/comp_ml/models")
-
-# check for CUDA availability
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)} is available.")
-    DEVICE = torch.device("cuda")
-else:
-    print("No GPU available.")
-    DEVICE = torch.device("cpu")
+_MODEL_SAVE_DIR = Path("./analysis/comp_ml/models")
 
 
 def read_dataset(dataset_path: str):
@@ -50,6 +42,14 @@ def read_dataset(dataset_path: str):
 
 
 def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000):
+    # check for CUDA availability
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)} is available.")
+        device = torch.device("cuda")
+    else:
+        print("No GPU available.")
+        device = torch.device("cpu")
+
     # open and load dataset
     start = time.time()
     train_games, train_wins = read_dataset(dataset_path)
@@ -62,14 +62,18 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
 
     # initialize model
     params = {"num_champions": 171, "base_width": 256, "bottleneck": 8, "dropout": 0.5, "separate_comp_blocks": 4, "pre_rank_blocks": 6, "post_rank_blocks": 6}
-    model = ResNet60(**params).to(DEVICE)
+    model = ResNet60(**params).to(device)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
+
     # initialize embedder
-    embedder = Embedder(params["num_champions"])
+    embedder = CompEmbedder(params["num_champions"])
     embedder.fit(train_games[0:batch_size])
 
-    # initialize optimizer and loss
+    # initialize Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.025, steps_per_epoch=len(train_games), epochs=100)
+
+    # define loss function
     loss_fn = torch.nn.BCELoss()
 
     # keep track of confidence reports and model states for saving the optimum model
@@ -94,8 +98,8 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
                 # get a batch of random games
                 games, wins = train_games[i:i + batch_size], train_wins[i:i + batch_size]
                 games = embedder(games)
-                games = torch.from_numpy(games).to(DEVICE)
-                wins = torch.from_numpy(wins).to(DEVICE)
+                games = torch.from_numpy(games).to(device)
+                wins = torch.from_numpy(wins).to(device)
 
                 # predict win/lose
                 predicted_wins = torch.flatten(model(games))
@@ -109,6 +113,9 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
                 loss.backward()
                 optimizer.step()
 
+                # step the learning rate scheduler
+                lr_scheduler.step()
+
                 if num_matches_seen_since_report >= evaluate_every:
                     model.eval()
 
@@ -117,7 +124,7 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
                         # get a batch of random games
                         games, wins = test_games[0:batch_size], test_wins[0:batch_size]
                         games = embedder(games)
-                        games = torch.from_numpy(games).to(DEVICE)
+                        games = torch.from_numpy(games).to(device)
 
                         # predict win/lose
                         predicted_wins = torch.flatten(model(games))
@@ -137,6 +144,7 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
                             f"\nhigh confidence prediction accuracy: {high_conf_accuracy:.2%} with {undecided:.2%} undecided"
                             f"\nloss since last report: {total_loss:.5f}"
                             f"\nrough alpha: {model.get_parameter('res_blocks_post_rank.1.alpha').item():.5f}"
+                            f"\ncurrent lr: {lr_scheduler.get_last_lr()[0]:.7f}"
                             f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}; Report {len(models)}"
                                   )
                         print(report)
@@ -155,13 +163,13 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
 
     finally:
         # create a directory for the model, embedder and params within the main model directory
-        real_save_dir = MODEL_SAVE_DIR / f"{int(time.time())}"
+        real_save_dir = _MODEL_SAVE_DIR / f"{int(time.time())}"
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
         # save model
         ml_lib.save_model(model.cpu(), params, models, real_save_dir / "models.dill")
         # save embedder
-        ml_lib.save_embedder(embedder, real_save_dir / "embedder.dill")
+        embedder.save(real_save_dir / "embedder.dill", {"num_champions": params["num_champions"]})
         # save params
         with open(real_save_dir / "params.json", "w") as f:
             json.dump(params, f)
