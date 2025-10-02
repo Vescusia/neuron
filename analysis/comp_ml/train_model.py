@@ -60,18 +60,28 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
     train_games, test_games, train_wins, test_wins = sklearn.model_selection.train_test_split(train_games, train_wins, test_size=0.10)
     print(f"Split Dataset in {(time.time() - start):.1f} s")
 
+    # define parameters for model and lr scheduler
+    params = {
+        "model": {"num_champions": 171, "base_width": 512, "bottleneck": 8, "dropout": 0.5, "separate_comp_blocks": 4,
+                  "pre_rank_blocks": 6, "post_rank_blocks": 6},
+        "lr": {"initial_lr": 0.001, "max_lr": 0.01, "min_lr": 0.00005, "one_cycle_epochs": 80,}
+    }
+
     # initialize model
-    params = {"num_champions": 171, "base_width": 256, "bottleneck": 8, "dropout": 0.5, "separate_comp_blocks": 4, "pre_rank_blocks": 6, "post_rank_blocks": 6}
-    model = ResNet60(**params).to(device)
+    model = ResNet60(**params["model"]).to(device)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
 
     # initialize embedder
-    embedder = CompEmbedder(params["num_champions"])
+    embedder = CompEmbedder(params["model"]["num_champions"])
     embedder.fit(train_games[0:batch_size])
 
     # initialize Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.025, steps_per_epoch=len(train_games), epochs=100)
+    optimizer = torch.optim.Adam(model.parameters())
+    lr_scheduler = ml_lib.LROneCycleTillCyclic(
+        optimizer,
+        **params["lr"],
+        steps_per_epoch=len(train_games),
+    )
 
     # define loss function
     loss_fn = torch.nn.BCELoss()
@@ -167,9 +177,9 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
         # save model
-        ml_lib.save_model(model.cpu(), params, models, real_save_dir / "models.dill")
+        ml_lib.save_model(model.cpu(), params["model"], models, real_save_dir / "models.dill")
         # save embedder
-        embedder.save(real_save_dir / "embedder.dill", {"num_champions": params["num_champions"]})
+        embedder.save(real_save_dir / "embedder.dill", {"num_champions": params["model"]["num_champions"]})
         # save params
         with open(real_save_dir / "params.json", "w") as f:
             json.dump(params, f)

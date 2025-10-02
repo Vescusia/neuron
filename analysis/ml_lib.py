@@ -1,5 +1,6 @@
 import inspect
 from pathlib import Path
+from copy import deepcopy
 
 import sklearn
 import torch
@@ -132,3 +133,64 @@ class Embedder:
 
     def __call__(self, games):
         return self._transform(self.embed(games))
+
+
+class LROneCycleTillCyclic(torch.optim.lr_scheduler.LRScheduler):
+    def __init__(self, optimizer: torch.optim.Optimizer, one_cycle_epochs: int, steps_per_epoch: int, initial_lr: float, max_lr: float, min_lr: float):
+        # do not initialize super. It will do an initial step, that is not wanted.
+
+        self.one_cycle_epochs = one_cycle_epochs
+        self.steps_per_epoch = steps_per_epoch
+        self.total_steps = 0
+
+        self.one_cycle = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=max_lr,
+            steps_per_epoch=steps_per_epoch,
+            epochs=one_cycle_epochs,
+            div_factor=max_lr / initial_lr,
+            final_div_factor=initial_lr / min_lr,
+        )
+
+        self.cyclic = torch.optim.lr_scheduler.CyclicLR(
+            optimizer,
+            max_lr=max_lr,
+            base_lr=min_lr,
+            mode="triangular2",
+        )
+
+    def step(self, _ = None):
+        epoch = self.total_steps // self.steps_per_epoch
+
+        if epoch < self.one_cycle_epochs:
+            self.one_cycle.step()
+        else:
+            self.cyclic.step()
+
+    def visualize(self):
+        """
+        Will try to visualize the learning rate development using matplotlib
+        """
+        scheduler = deepcopy(self)
+        visualize_lr_scheduler(scheduler, self.one_cycle_epochs * 2, steps=True, steps_per_epoch=self.steps_per_epoch)
+
+
+def visualize_lr_scheduler(scheduler: torch.optim.lr_scheduler.LRScheduler, epochs: int, steps: bool = False, steps_per_epoch: int | None = None) -> None:
+    import matplotlib.pyplot as plt
+
+    lrs = []
+
+    for _ in range(epochs):
+        if steps:
+            for _ in range(steps_per_epoch):
+                scheduler.step()
+                lrs.append(scheduler.get_last_lr()[0])
+        else:
+            scheduler.step()
+            lrs.append(scheduler.get_last_lr()[0])
+
+    fig, ax = plt.subplots()
+    ax.plot(lrs)
+    ax.set_xlabel("Epoch" if not steps else "Step")
+    ax.set_ylabel("LR")
+    plt.show()
