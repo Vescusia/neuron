@@ -142,6 +142,7 @@ class LROneCycleTillCyclic(torch.optim.lr_scheduler.LRScheduler):
         self.one_cycle_epochs = one_cycle_epochs
         self.steps_per_epoch = steps_per_epoch
         self.total_steps = 0
+        self._last_lr = [initial_lr]
 
         self.one_cycle = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
@@ -154,18 +155,21 @@ class LROneCycleTillCyclic(torch.optim.lr_scheduler.LRScheduler):
 
         self.cyclic = torch.optim.lr_scheduler.CyclicLR(
             optimizer,
-            max_lr=max_lr,
+            max_lr=initial_lr,
             base_lr=min_lr,
             mode="triangular2",
         )
 
-    def step(self, _ = None):
+    def step(self, _=None):
         epoch = self.total_steps // self.steps_per_epoch
+        self.total_steps += 1
 
         if epoch < self.one_cycle_epochs:
             self.one_cycle.step()
+            self._last_lr = self.one_cycle.get_last_lr()
         else:
             self.cyclic.step()
+            self._last_lr = self.cyclic.get_last_lr()
 
     def visualize(self):
         """
