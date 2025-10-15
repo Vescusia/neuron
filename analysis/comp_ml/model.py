@@ -1,5 +1,4 @@
 from torch import tensor, nn, unsqueeze
-import sklearn
 import numpy as np
 
 from analysis import ml_lib

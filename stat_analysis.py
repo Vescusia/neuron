@@ -3,7 +3,6 @@ from copy import copy
 from pathlib import Path
 
 import duckdb
-import pyarrow
 from numpy import uint8
 import click
 from tqdm import tqdm

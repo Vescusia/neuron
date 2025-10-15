@@ -1,0 +1,12 @@
+matplotlib~=3.10.7
+riotwatcher~=3.3.1
+numpy~=2.3.4
+pyarrow~=21.0.0
+scikit-learn~=1.7.2
+torch~=2.9.0
+tqdm~=4.67.1
+dill~=0.4.0
+lmdb~=1.7.5
+click~=8.3.0
+duckdb~=1.4.1
+requests

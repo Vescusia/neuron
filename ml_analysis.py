@@ -21,7 +21,7 @@ def cli_group(dataset_path):
 
 @cli_group.command("train-comp-model")
 @click.option("--batch-size", type=int, default=50_000, help="Game batch size for training (default: 50,000)")
-@click.option("--evaluate-every", type=int, default=2, help="Evaluate every n games (default: 10,000,000)")
+@click.option("--evaluate-every", type=int, default=20_000_000, help="Evaluate every n games (default: 20,000,000)")
 def train_comp_model(batch_size, evaluate_every):
     """Train the comp model; models will be saved to ./analysis/comp_ml/models"""
     from analysis.comp_ml.train_model import train_model

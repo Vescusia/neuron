@@ -13,8 +13,8 @@ Our highest priority has draft analysis. Although, things like items, runes, jun
   * [x] Winrates of single champions
   * [x] Winrates of synergies between two champions on the same team
   * [x] Winrates of full team comps
-* [ ] Use Machine Learning to predict
-  * [ ] Winning team from draft
+* [x] Use Machine Learning to predict
+  * [x] Winning team from draft
   * [ ] Ideal picks in draft
   * [ ] Ideal comps in draft
 
@@ -36,7 +36,7 @@ and source it:
 
 finally, install the dependencies: 
 
-``pip install riotwatcher lmdb click numpy pyarrow duckdb tqdm``
+``pip install -r requirements.txt``
 
 ## Usage
 ### Gathering Data
@@ -55,27 +55,42 @@ Additionally, certain match features (Patch, Rank, Picked Champions, Bans, Win/L
 will be saved as parquet datasets (in 'data/dataset') for fast access.
 
 ### Analysis
+#### Classic Statistics
 Calculating the winrate for a single champion (for example, Fiora) can be done like this:
 
-``python3 ./stat_analysis.py winrate Fiora``
+``python ./stat_analysis.py winrate Fiora``
 
 Calculating the winrate of a synergy, meaning two champions on the same team, is similar:
 
-``python3 ./stat_analysis.py synergy Fiora Twitch``
+``python ./stat_analysis.py synergy Fiora Twitch``
 
 For easy of use, one can calculate all possible synergies of a champion with one command:
 
-``python3 ./stat_analysis.py all-champ-synergies Fiora``
+``python ./stat_analysis.py all-champ-synergies Fiora``
 
 And, even more so, one can calculate **every** possible synergy: 
 
-``pytohn3 ./stat_analysis.py all-set-synergies``
+``pytohn ./stat_analysis.py all-set-synergies``
 
 An exemplary output of this command can be seen in [all_synergies.txt](all_synergies.txt).
 Especially interesting about the synergies is the fact that they are not constrained to specific role combinations. 
 On typical statistics websites, synergies of, say, bot laners would be supports.
 Yet in this dataset, one of the best synergies of, for example, KogMaw is... Malzahar. 
 Similarly interesting and unique relationships can be found all over the dataset and are the main motivation for this project.
+
+#### Machine Learning
+##### CompML
+The CompML models will try to predict the blue side winrate of a team from draft when both team comps are fully known.
+They are patch and ban agnostic.
+
+First, train the model ([defined in this file](analysis/comp_ml/model.py)), 
+with the params defined as '_PARAMS' at the top of [this](analysis/comp_ml/train_model.py) file like this:
+
+``python train-comp-model`` (terminate the training process once satisfied with the performance)
+
+Then, use the model to evaluate drafts (example input):
+
+``python comp-model <YOUR_MODEL_PATH> Jax JarvanIV Ahri Kaisa Rell Gragas XinZhao Galio Xayah Poppy PLATINUM``
 
 ## Dependencies
 Currently, Neuron depends on
