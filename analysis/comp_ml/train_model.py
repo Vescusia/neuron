@@ -11,6 +11,14 @@ from .model import CompEmbedder, ResNet60
 import lib.league_of_parquet as lop
 from analysis import ml_lib
 
+
+# define parameters for model and lr scheduler
+_PARAMS = {
+    "model": {"num_champions": 171, "base_width": 512, "bottleneck": 8, "dropout": 0.5, "separate_comp_blocks": 4,
+              "pre_rank_blocks": 6, "post_rank_blocks": 6},
+    "lr": {"initial_lr": 0.001, "max_lr": 0.01, "min_lr": 0.00005, "one_cycle_epochs": 80, }
+}
+
 # define save directory for the model
 _MODEL_SAVE_DIR = Path("./analysis/comp_ml/models")
 
@@ -41,7 +49,7 @@ def read_dataset(dataset_path: str):
     return games, wins
 
 
-def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000):
+def train_model(dataset_path: str, batch_size: int, evaluate_every: int):
     # check for CUDA availability
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)} is available.")
@@ -54,33 +62,27 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
     start = time.time()
     train_games, train_wins = read_dataset(dataset_path)
     print(f"Loaded Dataset in {(time.time() - start):.1f} s")
+    print(f"Total games in Dataset: {len(train_wins):_}")
 
     # split dataset
     start = time.time()
     train_games, test_games, train_wins, test_wins = sklearn.model_selection.train_test_split(train_games, train_wins, test_size=0.10)
     print(f"Split Dataset in {(time.time() - start):.1f} s")
 
-    # define parameters for model and lr scheduler
-    params = {
-        "model": {"num_champions": 171, "base_width": 512, "bottleneck": 8, "dropout": 0.5, "separate_comp_blocks": 4,
-                  "pre_rank_blocks": 6, "post_rank_blocks": 6},
-        "lr": {"initial_lr": 0.0003, "max_lr": 0.0075, "min_lr": 0.00003, "one_cycle_epochs": 100,}
-    }
-
     # initialize model
-    model = ResNet60(**params["model"]).to(device)
+    model = ResNet60(**_PARAMS["model"]).to(device)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
 
     # initialize embedder
-    embedder = CompEmbedder(params["model"]["num_champions"])
+    embedder = CompEmbedder(_PARAMS["model"]["num_champions"])
     embedder.fit(train_games[0:batch_size])
 
     # initialize Optimizer
     optimizer = torch.optim.Adam(model.parameters())
-    lr_scheduler = ml_lib.lr_one_cycle_till_cyclic(
+    lr_scheduler = ml_lib.LROneCycleTillCyclic(
         optimizer,
-        **params["lr"],
-        steps_per_epoch=len(train_games) // batch_size,
+        **_PARAMS["lr"],
+        steps_per_epoch=len(train_games),
     )
 
     # define loss function
@@ -156,7 +158,7 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
                             f"\nrough alpha: {model.get_parameter('res_blocks_post_rank.1.alpha').item():.5f}"
                             f"\ncurrent lr: {lr_scheduler.get_last_lr()[0]:.7f}"
                             f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}; Report {len(models)}"
-                                  )
+                        )
                         print(report)
 
                         # save report and current model
@@ -177,12 +179,14 @@ def train_model(dataset_path: str, batch_size=50_000, evaluate_every=10_000_000)
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
         # save model
-        ml_lib.save_model(model.cpu(), params["model"], models, real_save_dir / "models.dill")
+        ml_lib.save_model(model.cpu(), _PARAMS["model"], models, real_save_dir / "models.dill")
         # save embedder
-        embedder.save(real_save_dir / "embedder.dill", {"num_champions": params["model"]["num_champions"]})
+        embedder.save(real_save_dir / "embedder.dill", {"num_champions": _PARAMS["model"]["num_champions"]})
         # save params
         with open(real_save_dir / "params.json", "w") as f:
-            json.dump(params, f)
+            json.dump(_PARAMS, f)
         # save reports
         with open(real_save_dir / "reports.txt", "w") as f:
             f.writelines(reports)
+
+        print(f"Saved model to {real_save_dir}.")

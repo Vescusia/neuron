@@ -64,7 +64,7 @@ def crawl_continent(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_
                     except lop.WriteError.MissingVersion:
                         print(f"\n[ERROR {continent}] Match {match_id} has no version, skipping...\n")
                     # catch match having an invalid champion id (also happens)
-                    except lop.WriteError.InvalidChampionID as e:
+                    except lop.WriteError.InvalidChampionID:
                         print(f"\n[ERROR {continent}] Match {match_id} has an invalid champion id, skipping...\n")
 
                     # save match JSON
