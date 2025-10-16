@@ -1,6 +1,5 @@
 import inspect
 from pathlib import Path
-from copy import deepcopy
 
 import sklearn
 import torch
@@ -135,52 +134,45 @@ class Embedder:
         return self._transform(self.embed(games))
 
 
-class LROneCycleTillCyclic(torch.optim.lr_scheduler.LRScheduler):
-    def __init__(self, optimizer: torch.optim.Optimizer, one_cycle_epochs: int, steps_per_epoch: int, initial_lr: float, max_lr: float, min_lr: float):
-        # do not initialize super. It will do an initial step, that is not wanted.
+def lr_one_cycle_till_cyclic(optimizer: torch.optim.Optimizer, one_cycle_epochs: int, steps_per_epoch: int, initial_lr: float, max_lr: float, min_lr: float) -> torch.optim.lr_scheduler.SequentialLR:
+    """
+    Returns a ``SequentialLR`` which first does a ``OneCycleLR`` with ``one_cycle_epochs`` epochs,
+    then a ``CyclicLR``, with ``triangular2`` policy
+    :param optimizer: the Optimizer whose learning rate will be optimized.
+    :param one_cycle_epochs: Epochs of the ``OneCycleLR``
+    :param steps_per_epoch: Steps per epoch. This should be equivalent to batch size (.step() has to be called per batch, not epoch!)
+    :param initial_lr: Start Learning Rate
+    :param max_lr: Maximum Learning Rate the ``OneCycleLR`` will hit
+    :param min_lr: Minimum Learning Rate the ``CyclicLR`` will use as a bottom.
+    :return:
+    """
+    one_cycle = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=max_lr,
+        steps_per_epoch=steps_per_epoch,
+        epochs=one_cycle_epochs,
+        div_factor=max_lr / initial_lr,
+        final_div_factor=initial_lr / min_lr,
+    )
 
-        self.one_cycle_epochs = one_cycle_epochs
-        self.steps_per_epoch = steps_per_epoch
-        self.total_steps = 0
-        self._last_lr = [initial_lr]
+    cyclic = torch.optim.lr_scheduler.CyclicLR(
+        optimizer,
+        max_lr=initial_lr,
+        base_lr=min_lr,
+        mode="triangular2",
+    )
 
-        self.one_cycle = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=max_lr,
-            steps_per_epoch=steps_per_epoch,
-            epochs=one_cycle_epochs,
-            div_factor=max_lr / initial_lr,
-            final_div_factor=initial_lr / min_lr,
-        )
+    sequential = torch.optim.lr_scheduler.SequentialLR(optimizer, [one_cycle, cyclic], milestones=[one_cycle_epochs * steps_per_epoch])
 
-        self.cyclic = torch.optim.lr_scheduler.CyclicLR(
-            optimizer,
-            max_lr=initial_lr,
-            base_lr=min_lr,
-            mode="triangular2",
-        )
-
-    def step(self, _=None):
-        epoch = self.total_steps // self.steps_per_epoch
-        self.total_steps += 1
-
-        if epoch < self.one_cycle_epochs:
-            self.one_cycle.step()
-            self._last_lr = self.one_cycle.get_last_lr()
-        else:
-            self.cyclic.step()
-            self._last_lr = self.cyclic.get_last_lr()
-
-    def visualize(self):
-        """
-        Will try to visualize the learning rate development using matplotlib
-        """
-        scheduler = deepcopy(self)
-        visualize_lr_scheduler(scheduler, self.one_cycle_epochs * 2, steps=True, steps_per_epoch=self.steps_per_epoch)
+    return sequential
 
 
 def visualize_lr_scheduler(scheduler: torch.optim.lr_scheduler.LRScheduler, epochs: int, steps: bool = False, steps_per_epoch: int | None = None) -> None:
+    from copy import deepcopy
     import matplotlib.pyplot as plt
+
+    # deepcopy scheduler so it does not affect the actual code
+    scheduler = deepcopy(scheduler)
 
     lrs = []
 
@@ -198,3 +190,9 @@ def visualize_lr_scheduler(scheduler: torch.optim.lr_scheduler.LRScheduler, epoc
     ax.set_xlabel("Epoch" if not steps else "Step")
     ax.set_ylabel("LR")
     plt.show()
+
+
+if __name__ == "__main__":
+    optim = torch.optim.SGD(torch.nn.Linear(1, 1).parameters(), lr=0.01)
+    scheduler = lr_one_cycle_till_cyclic(optim, 80, 100, 0.001, 0.01, 0.0001)
+    visualize_lr_scheduler(scheduler, 160, steps=True, steps_per_epoch=100)
