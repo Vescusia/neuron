@@ -1,30 +1,31 @@
-
-from torch import tensor, nn, cat, unsqueeze
+from torch import tensor, nn, unsqueeze
 import sklearn
 import numpy as np
 
+from analysis import ml_lib
 
-class Embedder:
+
+class DraftEmbedder(ml_lib.Embedder):
     def __init__(self, num_champions: int):
         self.num_champions = num_champions
-        self.scaler = sklearn.preprocessing.StandardScaler()
 
-    def embed_games(self, games, scale: bool = True):
+    def embed(self, games):
         # create 2d array for the embedded game
         embedded = np.zeros((len(games), self.num_champions * 3 + 1 + 1), dtype=np.float32)
 
         # encode blue side picks
-        game_indices = np.arange(len(games)).repeat(5)
         pick_indices = games[:, 0:5].ravel()
+        game_indices = np.arange(len(games)).repeat(5)
         embedded[game_indices[pick_indices != 0], pick_indices[pick_indices != 0] - 1] = 1
 
         # encode red side picks
         pick_indices = games[:, 5:10].ravel()
+        game_indices = np.arange(len(games)).repeat(5)
         embedded[game_indices[pick_indices != 0], pick_indices[pick_indices != 0] - 1 + self.num_champions] = 1
 
         # encode bans
-        game_indices = np.arange(len(games)).repeat(10)
         ban_indices = games[:, 10:20].ravel()
+        game_indices = np.arange(len(games)).repeat(10)
         embedded[game_indices[ban_indices != 0], ban_indices[ban_indices != 0] - 1 + 2 * self.num_champions] = 1
 
         # write ranked_score
@@ -33,18 +34,7 @@ class Embedder:
         # write win/picking team
         embedded[:, -1] = games[:, -1]
 
-        # standard scale the whole embedding if desired
-        if scale:
-            embedded = self.scaler.transform(embedded)
-
         return embedded
-
-    def __call__(self, games):
-        return self.embed_games(games)
-
-    def fit(self, games):
-        games = self.embed_games(games, scale=False)
-        self.scaler.fit(games)
 
 
 class ResNet20(nn.Module):

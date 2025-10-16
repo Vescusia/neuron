@@ -1,144 +1,178 @@
 from pathlib import Path
 import time
-from json import dumps
+import json
 
 import sklearn
 import torch
 import numpy as np
 from tqdm import tqdm
-from pyarrow import RecordBatch
+from pyarrow.dataset import Dataset as PyarrowDataset
 
 import lib.league_of_parquet as lop
-from .model import ResNet20,Embedder
-
+from .model import ResNet20, DraftEmbedder
+from analysis import ml_lib
 
 # define dataset path
-DATASET_PATH = Path("./data/dataset")
+_DATASET_PATH = Path("./data/dataset")
 
 # define save directory for the model
-MODEL_SAVE_DIR = Path("./analysis/draft_ml/models")
+_MODEL_SAVE_DIR = Path("./analysis/draft_ml/models")
 
-# check for CUDA availability
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)} is available.")
-    DEVICE = torch.device("cuda")
-else:
-    print("No GPU available.")
-    DEVICE = torch.device("cpu")
-
-# create RNG instance
-RNG = np.random.default_rng(int(time.time()))
-
-
-def parse_batch(batch: RecordBatch):
-    batch = batch.to_pandas()
-
-    # load wins
-    wins = batch['win'].to_numpy().astype(dtype=np.uint16)
-
-    # load ranked scores
-    ranked_scores = batch['ranked_score'].to_numpy().astype(dtype=np.uint16)
-
-    # load picks
-    picks = np.array(batch['picks'].to_numpy().tolist(), dtype=np.uint16)
-
-    # load bans
-    bans = np.array(batch['bans'].to_numpy().tolist(), dtype=np.uint16)
-
-    # shuffle them together
-    shuffle_indices = np.arange(len(batch))
-    RNG.shuffle(shuffle_indices)
-    wins = wins[shuffle_indices]
-    ranked_scores = ranked_scores[shuffle_indices]
-    picks = picks[shuffle_indices]
-    bans = bans[shuffle_indices]
-
-    # repeat games by 5, as there are 5 picks per game
-    wins = np.repeat(wins, 5, axis=0)
-    ranked_scores = np.repeat(ranked_scores, 5, axis=0)
-    picks = np.repeat(picks, 5, axis=0)
-    bans = np.repeat(bans, 5, axis=0)
-
-    # create draft masks
-    blue_mask = np.array([
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [1, 0, 0, 0, 0, 1, 1, 0, 0, 0],
-        [1, 1, 0, 0, 0, 1, 1, 0, 0, 0],
-        [1, 1, 1, 0, 0, 1, 1, 1, 1, 0],
-        [1, 1, 1, 1, 0, 1, 1, 1, 1, 0],
-    ])
-    red_mask = np.array([
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [1, 0, 0, 0, 0, 1, 0, 0, 0, 0],
-        [1, 1, 1, 0, 0, 1, 1, 0, 0, 0],
-        [1, 1, 1, 0, 0, 1, 1, 1, 0, 0],
-        [1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
-    ])
-
-    # select blue side targets
-    blue_targets = picks[wins == 1]  # only select blue side wins
-    blue_targets = blue_targets.reshape(-1, 5)[::2]  # only select the blue side picks
-    blue_targets = blue_targets[np.arange(len(blue_targets)), np.tile(np.arange(5), len(blue_targets) // 5)]  # select the picked champions in reverse order
-
-    # select red side targets
-    red_targets = picks[wins == 0]
-    red_targets = red_targets.reshape(-1, 5)[1::2]
-    red_targets = red_targets[np.arange(len(red_targets)), np.tile(np.arange(5), len(red_targets) // 5)]
-
-    # combine into one targets array
-    all_targets = np.empty(len(batch) * 5, dtype=np.int64)
-    all_targets[wins == 1] = blue_targets
-    all_targets[wins == 0] = red_targets
-    all_targets -= 1  # only no pick/ban is 0
-
-    # mask game picks for blue side drafts
-    blue_side_picks = picks[wins == 1].ravel()
-    mega_blue_mask = np.tile(blue_mask, (len(blue_side_picks) // 50, 1)).ravel()
-    blue_side_picks[mega_blue_mask == 0] = 0
-
-    # mask game picks for red side drafts
-    red_side_picks = picks[wins == 0].ravel()
-    mega_red_mask = np.tile(red_mask, (len(red_side_picks) // 50, 1)).ravel()
-    red_side_picks[mega_red_mask == 0] = 0
-
-    # combine blue and red side drafts
-    all_picks = picks
-    all_picks[wins == 1] = blue_side_picks.reshape(-1, 10)
-    all_picks[wins == 0] = red_side_picks.reshape(-1, 10)
-
-    # concatenate into one games array
-    games = np.concatenate((all_picks, bans, ranked_scores.reshape(-1, 1), wins.reshape(-1, 1)), axis=1)
-
-    return games, all_targets
+# define parameters for model and lr scheduler
+_PARAMS = {
+    "num_champions": 171,
+    "width": 64,
+    "bottleneck": 6,
+    "dropout": 0.25,
+    "blocks_pre_win": 1,
+    "blocks_pre_rank": 1,
+    "blocks_post_rank": 2
+}
 
 
-def train_model(batch_size: int = 24_000, evaluate_every: int = 10_000_000, test_split: float = 0.1):
-    # load dataset
-    dataset = lop.open_dataset(DATASET_PATH)
-    print(f"Opened dataset from {DATASET_PATH}")
+class DraftDataset(torch.utils.data.Dataset):
+    def __init__(self, num_champions: int, ds: PyarrowDataset):
+        self.ds = ds
+        self.embedder = DraftEmbedder(num_champions)
 
-    # determine batches that belong to training
-    num_test_games = int(dataset.count_rows() * test_split)
-    num_test_batches = 0
-    for i, batch in enumerate(dataset.to_batches()):
-        num_test_batches += len(batch)  # just use the test batches variable as temporary storage
+    def __getitems__(self, idxs: list[int], _fit=False):
+        # get the batch of games from the dataset
+        batch = self.ds.take(idxs)
 
-        if num_test_batches >= num_test_games:
-            num_test_batches = i
-            break
+        # load wins
+        wins = batch['win'].to_numpy().astype(dtype=np.uint16)
+
+        # load ranked scores
+        ranked_scores = batch['ranked_score'].to_numpy().astype(dtype=np.uint16)
+
+        # load picks
+        picks = np.array(batch['picks'].to_numpy().tolist(), dtype=np.uint16)
+
+        # load bans
+        bans = np.array(batch['bans'].to_numpy().tolist(), dtype=np.uint16)
+
+        # repeat games by 5, as there are 5 predictable "winning" picks per game
+        wins = np.repeat(wins, 5, axis=0)
+        ranked_scores = np.repeat(ranked_scores, 5, axis=0)
+        picks = np.repeat(picks, 5, axis=0)
+        bans = np.repeat(bans, 5, axis=0)
+
+        # create draft masks
+        blue_mask = np.array([
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0, 1, 1, 0, 0, 0],
+            [1, 1, 0, 0, 0, 1, 1, 0, 0, 0],
+            [1, 1, 1, 0, 0, 1, 1, 1, 1, 0],
+            [1, 1, 1, 1, 0, 1, 1, 1, 1, 0],
+        ])
+        red_mask = np.array([
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+            [1, 1, 1, 0, 0, 1, 1, 0, 0, 0],
+            [1, 1, 1, 0, 0, 1, 1, 1, 0, 0],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+        ])
+
+        # select blue side targets
+        blue_targets = picks[wins == 1]  # only select blue side wins
+        blue_targets = blue_targets.reshape(-1, 5)[::2]  # only select the blue side picks
+        blue_targets = blue_targets[np.arange(len(blue_targets)), np.tile(np.arange(5), len(blue_targets) // 5)]
+
+        # select red side targets
+        red_targets = picks[wins == 0]
+        red_targets = red_targets.reshape(-1, 5)[1::2]
+        red_targets = red_targets[np.arange(len(red_targets)), np.tile(np.arange(5), len(red_targets) // 5)]
+
+        # combine into one targets array
+        all_targets = np.empty(len(batch) * 5, dtype=np.int64)
+        all_targets[wins == 1] = blue_targets
+        all_targets[wins == 0] = red_targets
+        all_targets -= 1  # only no pick/ban is 0
+
+        # mask game picks for blue side drafts
+        blue_side_picks = picks[wins == 1].ravel()
+        mega_blue_mask = np.tile(blue_mask, (len(blue_side_picks) // 50, 1)).ravel()
+        blue_side_picks[mega_blue_mask == 0] = 0
+
+        # mask game picks for red side drafts
+        red_side_picks = picks[wins == 0].ravel()
+        mega_red_mask = np.tile(red_mask, (len(red_side_picks) // 50, 1)).ravel()
+        red_side_picks[mega_red_mask == 0] = 0
+
+        # combine blue and red side drafts
+        all_picks = picks
+        all_picks[wins == 1] = blue_side_picks.reshape(-1, 10)
+        all_picks[wins == 0] = red_side_picks.reshape(-1, 10)
+
+        # concatenate into one games array
+        games = np.concatenate((all_picks, bans, ranked_scores.reshape(-1, 1), wins.reshape(-1, 1)), axis=1)
+
+        # fit the embedder if wanted
+        if _fit:
+            self.embedder.fit(games)
+
+        # embed the games
+        embedded_games = self.embedder(games)
+
+        return embedded_games, all_targets
+
+    def fit(self, idxs):
+        """
+        Fit the scaler on ``idxs``.
+        """
+        self.__getitems__(idxs, _fit=True)
+
+    def __getitem__(self, idx: int):
+        return self.__getitems__([idx])
+
+    def __len__(self):
+        return self.ds.count_rows()
+
+    @staticmethod
+    def collate_fn(batch):
+        games, targets = batch
+        return torch.from_numpy(games).to(torch.float32), torch.from_numpy(targets).to(torch.int64)
+
+
+def train_model(batch_size: int, evaluate_every: int):
+    # check for CUDA availability
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)} is available.")
+        device = torch.device("cuda")
+    else:
+        print("No GPU available.")
+        device = torch.device("cpu")
+
+    # load parquet dataset
+    dataset = lop.open_dataset(_DATASET_PATH)
+    print(f"Opened dataset from {_DATASET_PATH}")
+
+    # convert parquet dataset to torch dataset
+    dataset = DraftDataset(_PARAMS["num_champions"], dataset)
+    print(f"Loaded dataset with {len(dataset):_} games.")
+
+    # fit scaler of parquet dataset
+    dataset.fit(np.random.randint(0, len(dataset), batch_size))
+
+    # create subset for train and test data
+    test_indices = np.random.randint(0, len(dataset), len(dataset) // 10)
+    test_data = torch.utils.data.Subset(dataset, test_indices)
+    train_data = torch.utils.data.Subset(dataset, np.delete(np.arange(len(dataset)), test_indices))
+
+    # create dataloaders
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, collate_fn=DraftDataset.collate_fn, num_workers=4)
+    test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=True, collate_fn=DraftDataset.collate_fn)
 
     # create model
-    params = {"num_champions": 171, "width": 256, "bottleneck": 16, "dropout": 0.5, "blocks_pre_win": 4, "blocks_pre_rank": 4, "blocks_post_rank": 8}
-    model = ResNet20(**params).to(DEVICE)
+    model = ResNet20(**_PARAMS).to(device)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
-
-    # create embedder
-    embedder = Embedder(params["num_champions"])
-    embedder.fit(parse_batch(dataset.take(np.arange(batch_size)))[0])
 
     # store models and reports over time
     models = []
-    reports = []
+    reports = [
+        f"{model}\n",
+        f"{sum(p.numel() for p in model.parameters()):_} parameters\n"
+    ]
 
     # create optimizer and loss
     optim = torch.optim.Adam(model.parameters())
@@ -147,39 +181,16 @@ def train_model(batch_size: int = 24_000, evaluate_every: int = 10_000_000, test
     # train model
     training_start = time.time()
     try:
-        drafts_trained = 0
-        last_report = 0
+        epoch = 0
         total_loss = 0
 
-        # initialize progress bar
-        bar = tqdm(total=evaluate_every)
-        bar.unit = " Draft-States"
-
         while True:
-            for i, batch in enumerate(dataset.to_batches(batch_size=batch_size)):
-                # skip over test batches
-                if i < num_test_batches:
-                    continue
-
-                # randomly skip batches to "shuffle" them
-                if RNG.random() > 0.33:
-                    continue
-
-                # get a new batch
-                games, picks = parse_batch(batch)  # parse_batch also shuffles the games within the batch
-                drafts_trained += len(games)
-                bar.update(len(games))
-
-                # embed the batch
-                games = embedder(games)
-                games = torch.from_numpy(games).to(DEVICE)
-
+            for i, (draft_state, winning_pick) in enumerate(tqdm(train_loader)):
                 # predict
-                pred_picks = model(games)
+                pred_picks = model(draft_state)
 
                 # calculate loss
-                picks = torch.from_numpy(picks).to(DEVICE)
-                loss = loss_fn(pred_picks, picks)
+                loss = loss_fn(pred_picks, winning_pick)
                 total_loss += loss.item()
 
                 # backpropagate
@@ -187,54 +198,58 @@ def train_model(batch_size: int = 24_000, evaluate_every: int = 10_000_000, test
                 optim.zero_grad()
                 optim.step()
 
-                # evaluate every once in a while
-                if drafts_trained - last_report >= evaluate_every:
-                    bar.reset(evaluate_every)
-                    bar.update(drafts_trained - evaluate_every - last_report)
-                    last_report = drafts_trained
-                    model.eval()
+                if i >= 25:
+                    break
 
-                    with torch.no_grad():
-                        # select a random batch from the test ones
-                        for test_batch, _ in zip(dataset.to_batches(batch_size=batch_size), range(RNG.integers(low=0, high=num_test_batches))):
-                            pass
+            # increment epoch after having seen the whole training data
+            epoch += 1
 
-                        # parse the batch
-                        games, picks = parse_batch(test_batch)
-                        drafts_trained += len(games)
+            # evaluate every n epochs
+            if epoch % evaluate_every == 0:
+                model.eval()
+                with torch.no_grad():
+                    # get draft state and target out of batch
+                    draft_state, winning_pick = next(iter(test_loader))
 
-                        # embed the batch
-                        games = embedder(games)
-                        games = torch.from_numpy(games).to(DEVICE)
+                    # predict
+                    pred_picks = model(draft_state).cpu().numpy()
+                    print(pred_picks[0])
 
-                        # predict
-                        pred_picks = model(games).cpu()
+                    # calculate average maximum confidence
+                    max_confs = np.amax(pred_picks, axis=1)
+                    print(max_confs)
+                    avg_max_confidence = np.mean(max_confs)
 
-                        # report
-                        report = (
-                            f"\nTop-10 Accuracy: {sklearn.metrics.top_k_accuracy_score(picks, pred_picks, k=10):.2%}\n"
-                            f"total loss since last report: {total_loss:.5f}\n"
-                            f"{(time.time() - training_start) / 60:.2f} m; Epoch {drafts_trained / 5 // dataset.count_rows():_} ; Report {len(reports)}\n"
-                        )
+                    # report
+                    report = (
+                        f"\nTop-10 Accuracy: {sklearn.metrics.top_k_accuracy_score(winning_pick, pred_picks, k=10):.2%}"
+                        f"\naverage maximum confidence: {avg_max_confidence:.2%}"
+                        f"\ntotal loss since last report: {total_loss:.5f}"
+                        f"\n{(time.time() - training_start) / 60:.2f} m; Epoch {epoch} ; Report {epoch // evaluate_every + 1}"
+                    )
+                    print(report)
 
-                        models.append(np.copy(model))
-                        reports.append(report)
+                    # save report and current model state
+                    models.append(model.state_dict())
+                    reports.append(report)
 
-                    model.train()
-                    total_loss = 0
-
+                model.train()
+                total_loss = 0
 
     finally:
         # create a directory for the model, embedder and params within the main model directory
-        real_save_dir = MODEL_SAVE_DIR / f"{int(time.time())}"
+        real_save_dir = _MODEL_SAVE_DIR / f"{int(time.time())}"
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
-        # save model, embedder and params
-        with open(real_save_dir / "models.dill", "w") as f:
-           f.write(dumps(models))
-        with open(real_save_dir / "embedder.dill", "w") as f:
-            f.write(dumps(embedder))
+        # save model
+        ml_lib.save_model(model.cpu(), _PARAMS, models, real_save_dir / "models.dill")
+        # save embedder
+        dataset.embedder.save(real_save_dir / "embedder.dill", {"num_champions": _PARAMS["num_champions"]})
+        # save params
+        with open(real_save_dir / "params.json", "w") as f:
+            json.dump(_PARAMS, f)
+        # save reports
         with open(real_save_dir / "reports.txt", "w") as f:
             f.writelines(reports)
-        with open(real_save_dir / "params.json", "w") as f:
-            f.write(dumps(params))
+
+        print(f"Saved model to {real_save_dir}.")

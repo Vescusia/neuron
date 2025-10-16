@@ -158,7 +158,7 @@ def train_model(dataset_path: str, batch_size: int, evaluate_every: int):
                             f"\nrough alpha: {model.get_parameter('res_blocks_post_rank.1.alpha').item():.5f}"
                             f"\ncurrent lr: {lr_scheduler.get_last_lr()[0]:.7f}"
                             f"\n{(time.time() - start) / 60:.1f} m; Epoch {epoch + 1}; Report {len(models)}"
-                                  )
+                        )
                         print(report)
 
                         # save report and current model
