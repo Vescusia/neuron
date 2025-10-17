@@ -1,5 +1,4 @@
-from torch import tensor, nn, unsqueeze
-import sklearn
+from torch import int64, zeros, arange, nn, unsqueeze
 import numpy as np
 
 from analysis import ml_lib
@@ -42,8 +41,6 @@ class ResNet20(nn.Module):
         def __init__(self, in_out_features: int, bottleneck: int):
             super().__init__()
 
-            self.alpha = nn.Parameter(tensor(0.))
-
             self.linear_stack = nn.Sequential(
                 nn.Linear(in_out_features, bottleneck),
                 nn.ReLU(),
@@ -54,15 +51,46 @@ class ResNet20(nn.Module):
         def forward(self, X):
             residual = X
             out = self.linear_stack(X)
-            out = out * self.alpha + residual
+            out = out + residual
             return out
 
-    def __init__(self, num_champions: int, width: int, bottleneck: int, dropout: float, blocks_pre_win: int, blocks_pre_rank: int, blocks_post_rank: int):
+    def __init__(self, num_champions: int, width: int, bottleneck: int, dropout: float, blocks_individual: int, blocks_pre_win: int, blocks_pre_bans: int, blocks_pre_rank: int, blocks_post_rank: int):
         super().__init__()
+
+        self.num_champions = num_champions
+
+        self.bs_individual = nn.Sequential(
+            nn.Linear(num_champions, width),
+            nn.ReLU(),
+            *[self.ResBlock(width, bottleneck) for _ in range(blocks_individual)],
+        )
+
+        self.rs_individual = nn.Sequential(
+            nn.Linear(num_champions, width),
+            nn.ReLU(),
+            *[self.ResBlock(width, bottleneck) for _ in range(blocks_individual)],
+        )
+
+        self.res_blocks_pre_win = nn.Sequential(
+            *[self.ResBlock(width, bottleneck) for _ in range(blocks_pre_win)],
+        )
 
         self.linear_win_merger = nn.Sequential(
             nn.Linear(1, width),
             nn.ReLU(),
+        )
+
+        self.res_blocks_pre_ban = nn.Sequential(
+            *[self.ResBlock(width, bottleneck) for _ in range(blocks_pre_bans)],
+        )
+
+        self.linear_ban_merger = nn.Sequential(
+            nn.Linear(num_champions, width),
+            nn.ReLU(),
+        )
+
+        self.res_blocks_pre_rank = nn.Sequential(
+            *[self.ResBlock(width, width) for _ in range(blocks_pre_rank)],
         )
 
         self.linear_rank_merger = nn.Sequential(
@@ -70,37 +98,42 @@ class ResNet20(nn.Module):
             nn.ReLU(),
         )
 
-        self.res_blocks_pre_win = nn.Sequential(
-            nn.Linear(num_champions * 3, width),
-            nn.ReLU(),
-            *[self.ResBlock(width, bottleneck) for _ in range(blocks_pre_win)],
-        )
-
-        self.res_blocks_pre_rank = nn.Sequential(
-            *[self.ResBlock(width, width) for _ in range(blocks_pre_rank)],
-        )
-
         self.res_blocks_post_rank = nn.Sequential(
             *[self.ResBlock(width, bottleneck) for _ in range(blocks_post_rank)],
-            nn.Dropout(dropout),
             nn.Linear(width, num_champions),
+            nn.Dropout(dropout),
             nn.LogSoftmax(dim=1)
         )
 
     def forward(self, X):
-        # split out champions, ranked_scores and wins from the embedded X
-        champs = X[:, :-2]
+        # split out picks, bans, ranked_scores and wins from the embedded X
+        bs_picks = X[:, :self.num_champions]
+        rs_picks = X[:, self.num_champions:2 * self.num_champions]
+        bans = X[:, 2 * self.num_champions:3 * self.num_champions]
         ranks = X[:, -2]
         wins = X[:, -1]
 
-        out = self.res_blocks_pre_win(champs)
-        # add wins
+        # analyze comps individually and merge together
+        out = self.bs_individual(bs_picks) + self.rs_individual(rs_picks)
+
+        # res blocks pre win
+        out = self.res_blocks_pre_win(out)
+
+        # merge in wins
         out += self.linear_win_merger(unsqueeze(wins, 1))
 
+        # res blocks pre bans
+        out = self.res_blocks_pre_ban(out)
+
+        # merge in bans
+        out += self.linear_ban_merger(bans)
+
+        # res blocks pre rank
         out = self.res_blocks_pre_rank(out)
-        # add ranks
+
+        # merge in ranks
         out += self.linear_rank_merger(unsqueeze(ranks, 1))
 
+        # res blocks post ranks
         out = self.res_blocks_post_rank(out)
-
         return out

@@ -6,7 +6,7 @@ import sklearn
 import torch
 import numpy as np
 from tqdm import tqdm
-from pyarrow.dataset import Dataset as PyarrowDataset
+from pyarrow import Table as PyArrowTable
 
 import lib.league_of_parquet as lop
 from .model import ResNet20, DraftEmbedder
@@ -21,23 +21,33 @@ _MODEL_SAVE_DIR = Path("./analysis/draft_ml/models")
 # define parameters for model and lr scheduler
 _PARAMS = {
     "num_champions": 171,
-    "width": 64,
-    "bottleneck": 6,
-    "dropout": 0.25,
-    "blocks_pre_win": 1,
-    "blocks_pre_rank": 1,
-    "blocks_post_rank": 2
+    "model": {
+        "width": 256,
+        "bottleneck": 8,
+        "dropout": 0.5,
+        "blocks_individual": 4,
+        "blocks_pre_win": 2,
+        "blocks_pre_bans": 2,
+        "blocks_pre_rank": 2,
+        "blocks_post_rank": 4
+    },
+    "lr": {
+        "initial_lr": 0.0004,  # should be roughly <1/25 of max_lr
+        "max_lr": 0.01,
+        "min_lr": 0.00002,
+        "one_cycle_epochs": 50,
+    }
 }
 
 
 class DraftDataset(torch.utils.data.Dataset):
-    def __init__(self, num_champions: int, ds: PyarrowDataset):
-        self.ds = ds
+    def __init__(self, num_champions: int, table: PyArrowTable):
+        self.table = table
         self.embedder = DraftEmbedder(num_champions)
 
     def __getitems__(self, idxs: list[int], _fit=False):
         # get the batch of games from the dataset
-        batch = self.ds.take(idxs)
+        batch = self.table.take(idxs)
 
         # load wins
         wins = batch['win'].to_numpy().astype(dtype=np.uint16)
@@ -126,7 +136,7 @@ class DraftDataset(torch.utils.data.Dataset):
         return self.__getitems__([idx])
 
     def __len__(self):
-        return self.ds.count_rows()
+        return len(self.table)
 
     @staticmethod
     def collate_fn(batch):
@@ -144,12 +154,15 @@ def train_model(batch_size: int, evaluate_every: int):
         device = torch.device("cpu")
 
     # load parquet dataset
+    print(f"Opening dataset from {_DATASET_PATH}")
+    start = time.time()
     dataset = lop.open_dataset(_DATASET_PATH)
-    print(f"Opened dataset from {_DATASET_PATH}")
+    table = dataset.to_table()
+    print(f"Dataset loaded to memory in {time.time() - start:.2f} s")
 
     # convert parquet dataset to torch dataset
-    dataset = DraftDataset(_PARAMS["num_champions"], dataset)
-    print(f"Loaded dataset with {len(dataset):_} games.")
+    dataset = DraftDataset(_PARAMS["num_champions"], table)
+    print(f"Dataset contains {len(dataset):_} games")
 
     # fit scaler of parquet dataset
     dataset.fit(np.random.randint(0, len(dataset), batch_size))
@@ -160,11 +173,12 @@ def train_model(batch_size: int, evaluate_every: int):
     train_data = torch.utils.data.Subset(dataset, np.delete(np.arange(len(dataset)), test_indices))
 
     # create dataloaders
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, collate_fn=DraftDataset.collate_fn, num_workers=4)
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, collate_fn=DraftDataset.collate_fn, num_workers=6, pin_memory=torch.cuda.is_available())
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=True, collate_fn=DraftDataset.collate_fn)
+    test_loader_batches = iter(test_loader)
 
     # create model
-    model = ResNet20(**_PARAMS).to(device)
+    model = ResNet20(num_champions=_PARAMS["num_champions"], **_PARAMS["model"]).to(device)
     print(f"Model has {sum(p.numel() for p in model.parameters()):_} parameters")
 
     # store models and reports over time
@@ -174,9 +188,19 @@ def train_model(batch_size: int, evaluate_every: int):
         f"{sum(p.numel() for p in model.parameters()):_} parameters\n"
     ]
 
-    # create optimizer and loss
+    # create optimizer
     optim = torch.optim.Adam(model.parameters())
-    loss_fn = torch.nn.NLLLoss()
+
+    # create lr scheduler
+    lr_scheduler = ml_lib.lr_one_cycle_till_cyclic(
+        optim,
+        **_PARAMS["lr"],
+        steps_per_epoch=len(train_loader)
+    )
+
+    # define loss function
+    criterion = torch.nn.NLLLoss()
+    torch.autograd.set_detect_anomaly(True)
 
     # train model
     training_start = time.time()
@@ -186,20 +210,22 @@ def train_model(batch_size: int, evaluate_every: int):
 
         while True:
             for i, (draft_state, winning_pick) in enumerate(tqdm(train_loader)):
+                draft_state, winning_pick = draft_state.to(device), winning_pick.to(device)
+
                 # predict
                 pred_picks = model(draft_state)
 
                 # calculate loss
-                loss = loss_fn(pred_picks, winning_pick)
+                loss = criterion(pred_picks, winning_pick)
                 total_loss += loss.item()
 
                 # backpropagate
-                loss.backward()
                 optim.zero_grad()
+                loss.backward()
                 optim.step()
 
-                if i >= 25:
-                    break
+                # step the learning rate
+                lr_scheduler.step()
 
             # increment epoch after having seen the whole training data
             epoch += 1
@@ -208,24 +234,30 @@ def train_model(batch_size: int, evaluate_every: int):
             if epoch % evaluate_every == 0:
                 model.eval()
                 with torch.no_grad():
+                    # get a new batch from the test loader
+                    try:
+                        batch = next(test_loader_batches)
+                    except StopIteration:
+                        test_loader_batches = iter(test_loader)
+                        batch = next(test_loader_batches)
+
                     # get draft state and target out of batch
-                    draft_state, winning_pick = next(iter(test_loader))
+                    draft_state, winning_pick = batch
 
                     # predict
-                    pred_picks = model(draft_state).cpu().numpy()
-                    print(pred_picks[0])
+                    pred_picks = model(draft_state.to(device)).cpu().numpy()
 
                     # calculate average maximum confidence
                     max_confs = np.amax(pred_picks, axis=1)
-                    print(max_confs)
-                    avg_max_confidence = np.mean(max_confs)
+                    avg_max_confidence = np.exp(np.mean(max_confs))
 
                     # report
                     report = (
                         f"\nTop-10 Accuracy: {sklearn.metrics.top_k_accuracy_score(winning_pick, pred_picks, k=10):.2%}"
                         f"\naverage maximum confidence: {avg_max_confidence:.2%}"
                         f"\ntotal loss since last report: {total_loss:.5f}"
-                        f"\n{(time.time() - training_start) / 60:.2f} m; Epoch {epoch} ; Report {epoch // evaluate_every + 1}"
+                        f"\ncurrent lr: {lr_scheduler.get_last_lr()[0]:.5f}"
+                        f"\n{(time.time() - training_start) / 60:.2f} m; Epoch {epoch} ; Report {epoch // evaluate_every}"
                     )
                     print(report)
 
@@ -242,7 +274,7 @@ def train_model(batch_size: int, evaluate_every: int):
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
         # save model
-        ml_lib.save_model(model.cpu(), _PARAMS, models, real_save_dir / "models.dill")
+        ml_lib.save_model(model.cpu(), _PARAMS["model"], models, real_save_dir / "models.dill")
         # save embedder
         dataset.embedder.save(real_save_dir / "embedder.dill", {"num_champions": _PARAMS["num_champions"]})
         # save params

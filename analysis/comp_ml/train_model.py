@@ -14,9 +14,21 @@ from analysis import ml_lib
 
 # define parameters for model and lr scheduler
 _PARAMS = {
-    "model": {"num_champions": 171, "base_width": 512, "bottleneck": 8, "dropout": 0.5, "separate_comp_blocks": 4,
-              "pre_rank_blocks": 6, "post_rank_blocks": 6},
-    "lr": {"initial_lr": 0.001, "max_lr": 0.01, "min_lr": 0.00005, "one_cycle_epochs": 80, }
+    "model": {
+        "num_champions": 171,
+        "base_width": 512,
+        "bottleneck": 8,
+        "dropout": 0.5,
+        "separate_comp_blocks": 4,
+        "pre_rank_blocks": 6,
+        "post_rank_blocks": 6
+    },
+    "lr": {
+        "initial_lr": 0.0003,  # should be roughly <1/25 of max_lr
+        "max_lr": 0.0075,
+        "min_lr": 0.00003,
+        "one_cycle_epochs": 100,
+    }
 }
 
 # define save directory for the model
@@ -79,7 +91,7 @@ def train_model(dataset_path: str, batch_size: int, evaluate_every: int):
 
     # initialize Optimizer
     optimizer = torch.optim.Adam(model.parameters())
-    lr_scheduler = ml_lib.LROneCycleTillCyclic(
+    lr_scheduler = ml_lib.lr_one_cycle_till_cyclic(
         optimizer,
         **_PARAMS["lr"],
         steps_per_epoch=len(train_games),

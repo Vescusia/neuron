@@ -1,6 +1,7 @@
 import inspect
 from pathlib import Path
 
+import numpy as np
 import sklearn
 import torch
 import dill
@@ -141,7 +142,7 @@ def lr_one_cycle_till_cyclic(optimizer: torch.optim.Optimizer, one_cycle_epochs:
     :param optimizer: the Optimizer whose learning rate will be optimized.
     :param one_cycle_epochs: Epochs of the ``OneCycleLR``
     :param steps_per_epoch: Steps per epoch. This should be equivalent to batch size (.step() has to be called per batch, not epoch!)
-    :param initial_lr: Start Learning Rate
+    :param initial_lr: Start Learning Rate (should be roughly <=1/25 of max_lr)
     :param max_lr: Maximum Learning Rate the ``OneCycleLR`` will hit
     :param min_lr: Minimum Learning Rate the ``CyclicLR`` will use as a bottom.
     :return:
@@ -190,6 +191,18 @@ def visualize_lr_scheduler(scheduler: torch.optim.lr_scheduler.LRScheduler, epoc
     ax.set_xlabel("Epoch" if not steps else "Step")
     ax.set_ylabel("LR")
     plt.show()
+
+
+def one_hot(max_v: int, indices: list[int], dtype=np.uint32) -> np.ndarray:
+    """
+    One hot encode a list of indices (normally class labels) into an array.
+    :param max_v: The maximum value (index) that could be hot. Also is the length of the returned array.
+    :param indices: The list of hot indices.
+    :param dtype: The dtype of the returned array.
+    """
+    a = np.zeros(max_v, dtype=dtype)
+    a[indices] = 1
+    return a
 
 
 if __name__ == "__main__":

@@ -62,7 +62,7 @@ def use_comp_model(model_path, report_index, champions, tier, division):
 
 
 @cli_group.command("train-draft-model")
-@click.option("--batch-size", type=int, default=20_000, help="Game batch size for training (default: 20,000)")
+@click.option("--batch-size", type=int, default=25_000, help="Game batch size for training (default: 25,000)")
 @click.option("--evaluate-every", type=int, default=1, help="Evaluate every n epochs (default: 1)")
 def train_draft_model(batch_size, evaluate_every):
     """Train the draft model; models will be saved to ./analysis/draft_ml/models"""
