@@ -15,7 +15,7 @@ class ContinentDB:
     def __init__(self, env: Environment, continent: str, **kwargs):
         self.continent = continent
         self.env = env
-        self.db = env.open_db(str(continent).encode(), dupsort=False, **kwargs)
+        self.db = env.open_db(str(continent).encode(), **kwargs)
 
     def begin(self, write: bool = False, **kwargs):
         return self.env.begin(write=write, db=self.db, **kwargs)
@@ -30,7 +30,7 @@ class ContinentDB:
 
     def clone_to(self, other: Self) -> tuple[int, int]:
         """
-        Migrate all entries from ``self`` to ``other``.
+        Clone all entries from ``self`` to ``other``.
 
         :return: tuple (total number of records sourced (effectively ``self.count()``), total number of records written to ``other`` (no overwrite!)
         """
