@@ -86,18 +86,20 @@ They are patch and ban agnostic.
 First, train the model ([defined in this file](analysis/comp_ml/model.py)), 
 with the params defined as '_PARAMS' at the top of [this](analysis/comp_ml/train_model.py) file like this:
 
-``python train-comp-model`` (terminate the training process once satisfied with the performance)
+``python ml_analysis.py train-comp-model`` (terminate the training process once satisfied with the performance)
 
 Then, use the model to evaluate drafts (example input):
 
-``python comp-model <YOUR_MODEL_PATH> Jax JarvanIV Ahri Kaisa Rell Gragas XinZhao Galio Xayah Poppy PLATINUM``
+``python ml_analysis.py comp-model <YOUR_MODEL_PATH> Jax JarvanIV Ahri Kaisa Rell Gragas XinZhao Galio Xayah Poppy PLATINUM``
 
-## Dependencies
-Currently, Neuron depends on
-* [RiotWatcher](https://github.com/pseudonym117/Riot-Watcher), a thin python wrapping for the Riot-API
-* [lmdb](https://pypi.org/project/lmdb/), LMDB bindings for python
-* [click](https://click.palletsprojects.com/en/stable/), a quick but solid CLI library
-* numpy
-* [pyarrow](https://arrow.apache.org/docs/python/index.html) for fast columnar data storage
-* [duckdb](https://duckdb.org) for easy SQL querying of different data formats
-* [tqdm](https://pypi.org/project/tqdm/), a progress bar library
+##### DraftML
+The DraftML models will try to predict the optimal pick for either blue side or red side within draft. 
+
+First, train the model ([defined in this file](analysis/draft_ml/model.py)), 
+with the params defined as '_PARAMS' at the top of [this](analysis/draft_ml/train_model.py) file like this:
+
+``python ml_analysis.py train-draft-model`` (terminate the training process once satisfied with the performance)
+
+Then, use the model to draft optimal picks interactively:
+
+``python ml_analysis.py draft <YOUR_MODEL_PATH> <YOUR_RANK>``

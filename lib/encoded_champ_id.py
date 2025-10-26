@@ -194,20 +194,27 @@ _id_to_int_map: dict[int, uint8] = {champ: uint8(i) for champ, i in _id_to_int_m
 # reverse the map
 _int_to_id_map: dict[uint8, int] = {v: k for k, v in _id_to_int_map.items()}
 
+# map champion ids to names
+_id_to_name_map: dict[int, str] = {int(data['key']): name for name, data in CHAMPIONS.items()}
+
 
 def name_to_int(champ_name: str) -> uint8:
     """
     :param champ_name: Name (in lib.CHAMPIONS 'id') of the champion. E.g., "Belveth", not "Bel'Veth"
+    :return: encoded Champion as uint8
     """
     return _id_to_int_map[int(CHAMPIONS[champ_name]['key'])]
 
 
-def to_int(champ_id: int) -> uint8:
+def id_to_int(champ_id: int) -> uint8:
+    """
+    :return: encoded Champion as uint8
+    """
     return _id_to_int_map[champ_id]
 
 
-def from_int(id_int: uint8) -> int:
+def int_to_name(champ_int: uint8) -> str:
     """
-    :return: id/key of the champion
+    :return: Name of the encoded Champion
     """
-    return CHAMPIONS[_int_to_id_map[id_int]]
+    return _id_to_name_map[_int_to_id_map[champ_int]]

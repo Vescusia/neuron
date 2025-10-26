@@ -26,16 +26,16 @@ _PARAMS = {
         "bottleneck": 8,
         "dropout": 0.5,
         "blocks_individual": 4,
-        "blocks_pre_win": 2,
-        "blocks_pre_bans": 2,
-        "blocks_pre_rank": 2,
-        "blocks_post_rank": 4
+        "blocks_pre_win": 5,
+        "blocks_pre_bans": 5,
+        "blocks_pre_rank": 5,
+        "blocks_post_rank": 5
     },
     "lr": {
-        "initial_lr": 0.0004,  # should be roughly <1/25 of max_lr
+        "initial_lr": 0.001,  # should be roughly <1/25 of max_lr
         "max_lr": 0.01,
-        "min_lr": 0.00002,
-        "one_cycle_epochs": 50,
+        "min_lr": 0.00001,
+        "one_cycle_epochs": 40,
     }
 }
 
@@ -44,6 +44,7 @@ class DraftDataset(torch.utils.data.Dataset):
     def __init__(self, num_champions: int, table: PyArrowTable):
         self.table = table
         self.embedder = DraftEmbedder(num_champions)
+        self.rng = np.random.default_rng(int(time.time()))
 
     def __getitems__(self, idxs: list[int], _fit=False):
         # get the batch of games from the dataset
@@ -57,6 +58,10 @@ class DraftDataset(torch.utils.data.Dataset):
 
         # load picks
         picks = np.array(batch['picks'].to_numpy().tolist(), dtype=np.uint16)
+        # shuffle picks (per game, per side) to prevent top lane always being first pick (and so on)
+        picks = picks.reshape((-1, 5))
+        self.rng.shuffle(picks, axis=1)
+        picks = picks.reshape((-1, 10))
 
         # load bans
         bans = np.array(batch['bans'].to_numpy().tolist(), dtype=np.uint16)
@@ -274,7 +279,7 @@ def train_model(batch_size: int, evaluate_every: int):
         real_save_dir.mkdir(parents=True, exist_ok=True)
 
         # save model
-        ml_lib.save_model(model.cpu(), _PARAMS["model"], models, real_save_dir / "models.dill")
+        ml_lib.save_model(model.cpu(), {"num_champions": _PARAMS["num_champions"], **_PARAMS["model"]}, models, real_save_dir / "models.dill")
         # save embedder
         dataset.embedder.save(real_save_dir / "embedder.dill", {"num_champions": _PARAMS["num_champions"]})
         # save params

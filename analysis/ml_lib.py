@@ -44,10 +44,13 @@ def load_model(path, state_dict_index: int = -1) -> torch.nn.Module:
     namespace = {}
     exec(source, namespace)
 
+    # load model parameters
+    params = model_dict["model_kwargs"]
+
     # instantiate the model class
     model_name = model_dict["model_name"]
     model = namespace[model_name]
-    model: torch.nn.Module = model(**model_dict["model_kwargs"])
+    model: torch.nn.Module = model(**params)
 
     # load desired state dict
     state_dicts = model_dict["state_dicts"]

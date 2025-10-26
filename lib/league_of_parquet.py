@@ -75,7 +75,7 @@ class ContinentDatasetWriter:
 
         # encode bans to u8
         try:
-            encoded_bans = [lib.encoded_champ_id.to_int(ban['championId']) for ban in bans]
+            encoded_bans = [lib.encoded_champ_id.id_to_int(ban['championId']) for ban in bans]
         except KeyError as e:
             raise WriteError.InvalidChampionID(str(e))
 
@@ -86,7 +86,7 @@ class ContinentDatasetWriter:
 
         # encode picks to u8
         try:
-            encoded_picks = [lib.encoded_champ_id.to_int(pick) for pick in picks]
+            encoded_picks = [lib.encoded_champ_id.id_to_int(pick) for pick in picks]
         except KeyError as e:
             raise WriteError.InvalidChampionID(str(e))
 
