@@ -1,4 +1,5 @@
 from time import time
+from typing import Self
 
 from lmdb import Environment
 
@@ -14,18 +15,37 @@ class ContinentDB:
     def __init__(self, env: Environment, continent: str, **kwargs):
         self.continent = continent
         self.env = env
-        self.db = env.open_db(str(continent).encode(), **kwargs)
+        self.db = env.open_db(str(continent).encode(), dupsort=False, **kwargs)
 
     def begin(self, write: bool = False, **kwargs):
         return self.env.begin(write=write, db=self.db, **kwargs)
 
     def count(self) -> int:
         """
-        this is a pretty expensive method; try to not call often.
         :return: number of records in this database.
         """
         with self.begin() as txn:
-            return sum(1 for _ in txn.cursor())
+            with txn.cursor() as cursor:
+                return sum([1 for _ in cursor.iternext(keys=False, values=False)])
+
+    def clone_to(self, other: Self) -> tuple[int, int]:
+        """
+        Migrate all entries from ``self`` to ``other``.
+
+        :return: tuple (total number of records sourced (effectively ``self.count()``), total number of records written to ``other`` (no overwrite!)
+        """
+        total_sourced = 0
+        total_written = 0
+
+        with self.begin() as source_txn:
+            with other.begin(write=True) as dest_txn:
+                with dest_txn.cursor() as dest_cursor:
+                    with source_txn.cursor() as source_cursor:
+                        for key, value in source_cursor:
+                            total_sourced += 1
+                            total_written += int(dest_cursor.put(key, value, overwrite=False))  # will return False if the key already existed.
+
+        return total_sourced, total_written
 
     def __str__(self):
         return f"RegionDB({self.continent})"
@@ -63,7 +83,7 @@ class SummonerDB:
 
     def put(self, puuid: str, next_fetch_time: int, wait_time: int, overwrite=False) -> bool:
         """
-        :return: True if it was written, or False to indicate the Summoner was already present and overwrite=False. On success, the cursor is positioned on the new record.
+        :return: ``True`` if it was written, or ``False`` to indicate the Summoner was already present and ``overwrite=False``. On success, the cursor is positioned on the new record.
         """
         key, value = self._encode_entry(puuid, next_fetch_time, wait_time)
 
