@@ -25,8 +25,7 @@ class ContinentDB:
         :return: number of records in this database.
         """
         with self.begin() as txn:
-            with txn.cursor() as cursor:
-                return sum([1 for _ in cursor.iternext(keys=False, values=False)])
+            return txn.stat()['entries']
 
     def clone_to(self, other: Self) -> tuple[int, int]:
         """
