@@ -186,6 +186,7 @@ _id_to_int_map: dict[int, int] = {
     26: 169,  # Zilean
     142: 170,  # Zoe
     143: 171,  # Zyra
+    904: 172,  # Zaahen
 }
 
 # change the datatype to numpy
