@@ -11,7 +11,7 @@ import numpy as np
 import riotwatcher as rw
 
 from .continent_db import ContinentDB, MatchDB, SummonerDB
-from .match_request_thread import crawl_continent
+from .continent_crawler import crawl
 from lib.league_of_parquet import LolDatasetWriter
 
 
@@ -34,7 +34,7 @@ def gather(continents: list[str], match_db_path: Path, sum_db_path: Path, matche
     stop_q, state_q = Queue(), Queue()
     crawlers: dict[str, Thread] = {}
     for continent in continents:
-        t = Thread(target=crawl_continent, args=(
+        t = Thread(target=crawl, args=(
             stop_q,
             state_q,
             MatchDB(ContinentDB(match_env, continent)),

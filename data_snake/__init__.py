@@ -1,1 +1,1 @@
-from .main import gather
+from .data_snake import gather
