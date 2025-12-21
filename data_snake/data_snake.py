@@ -34,7 +34,7 @@ def gather(continents: list[str], match_db_path: Path, sum_db_path: Path, matche
     stop_q, state_q = Queue(), Queue()
     crawlers: dict[str, Thread] = {}
     for continent in continents:
-        t = Thread(target=crawl, args=(
+        t = Thread(target=crawl, daemon=True, args=(
             stop_q,
             state_q,
             MatchDB(ContinentDB(match_env, continent)),

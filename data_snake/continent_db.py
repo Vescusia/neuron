@@ -94,13 +94,14 @@ class SummonerDB:
         with self._cdb.begin() as txn:
             return self._decode_entry(txn.get(puuid))
 
-    def put_multi(self, entries: list[tuple[str, int, int]], overwrite=False) -> tuple[int, int]:
+    def put_multi(self, summoners: list[str], times: list[tuple[int, int]], overwrite=False) -> tuple[int, int]:
         """
-        :param entries: list of tuples (puuid, next fetch time, wait time)
+        :param summoners: list of summoner puuids
+        :param times: list of tuples (fetch time, wait time)
         :param overwrite: whether to overwrite existing entries or not
         :return: a tuple (consumed, added), where consumed is the length of summoners, and added is the number of new summoners actually added to the database. added may be less than consumed when overwrite=False.
         """
-        encoded = [self._encode_entry(s, t, w) for s, t, w in entries]
+        encoded = [self._encode_entry(s, t, w) for s, (t, w) in zip(summoners, times)]
 
         with self._cdb.begin(write=True) as txn:
             cur = txn.cursor()
@@ -169,7 +170,21 @@ class MatchDB:
         encoded_id = lib.encoded_match_id.to_bytes(match_id)
 
         with self._cdb.begin(write=True) as txn:
-            return txn.put(encoded_id, None)
+            return txn.put(encoded_id, b'')  # this is equivalent to .put(..., None), but more readable
+
+    def mark_multi(self, match_ids: list[str]) -> tuple[int, int]:
+        """
+        Marks multiple matches as explored.
+
+        :param match_ids: list of match ids.
+
+        :return: tuple (consumed, marked) where consumed is the number of matches in ``match_ids`` and marked is the number of new matches.
+        """
+        encoded_ids = [lib.encoded_match_id.to_bytes(match_id) for match_id in match_ids]
+
+        with self._cdb.begin(write=True) as txn:
+            cur = txn.cursor()
+            return cur.putmulti([(encoded_id, b'') for encoded_id in encoded_ids], overwrite=False)
 
     def is_marked(self, match_id: str) -> bool:
         """

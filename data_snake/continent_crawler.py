@@ -27,6 +27,7 @@ def crawl(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_db: Summon
     # open lzma compressed JSON ball
     matches_ball = CompressedJSONBall(matches_path, split_every=36_000)
 
+    # --- 90% of this code is error handling :( ---
     try:
         while True:
             try:
@@ -36,53 +37,64 @@ def crawl(stop_q: Queue[None], state_q: Queue, match_db: MatchDB, sum_db: Summon
 
                 # fetch match history from a player
                 new_match_ids, ranked_score, satisfaction = fetch_player(match_db, sum_db, lolwatcher)
-                # update state thread
-                state_q.put((len(new_match_ids), satisfaction))
+
+                # store which matches got explored
+                explored_match_ids: list[str] = []
 
                 # explore every match
-                for match_id in new_match_ids:
-                    # request Match from RiotAPI
-                    try:
-                        new_match = lolwatcher.match.by_id(continent, match_id)
-                    except rw.ApiError as e:
-                        # check if this match id is invalid
-                        if e.response.status_code == 404:
-                            print(f"\n[ERROR {continent}] Match {match_id} is invalid, skipping...\n")
-                            # mark as explored
-                            match_db.mark(match_id)
-                            continue
-                        # bubble up the error if it's not recognized here
-                        else:
-                            raise e
+                try:
+                    for match_id in new_match_ids:
+                        # request Match from RiotAPI
+                        try:
+                            new_match = lolwatcher.match.by_id(continent, match_id)
+                        except rw.ApiError as e:
+                            # check if this match id is invalid
+                            if e.response.status_code == 404:
+                                print(f"\n[ERROR {continent}] Match {match_id} is invalid, skipping...\n")
+                                explored_match_ids.append(match_id)  # still mark as explored
+                                continue
+                            # bubble up the error if it's not recognized here
+                            else:
+                                raise e
 
-                    # add match to dataset
-                    try:
-                        ds_writer.write_match(new_match, ranked_score)
-                    # catch match not having a version (happens sometimes)
-                    except lop.WriteError.MissingVersion:
-                        print(f"\n[ERROR {continent}] Match {match_id} has no version, skipping...\n")
-                    # catch match having an invalid champion id (also happens)
-                    except lop.WriteError.InvalidChampionID:
-                        print(f"\n[ERROR {continent}] Match {match_id} has an invalid champion id, skipping...\n")
+                        # add match to dataset
+                        try:
+                            ds_writer.write_match(new_match, ranked_score)
+                        # catch match not having a version (happens sometimes)
+                        except lop.WriteError.MissingVersion:
+                            print(f"\n[ERROR {continent}] Match {match_id} has no version, skipping...\n")
+                        # catch match having an invalid champion id (also happens)
+                        except lop.WriteError.InvalidChampionID:
+                            print(f"\n[ERROR {continent}] Match {match_id} has an invalid champion id, skipping...\n")
 
-                    # save match JSON
-                    matches_ball.append(new_match)
+                        # save match JSON
+                        matches_ball.append(new_match)
 
-                    # add participants to SummonerDB
-                    puuids = [participant['puuid'] for participant in new_match['info']['participants']]
-                    request_times = [ReqTimeCalc.initial() for _ in puuids]
-                    sum_db.put_multi([(puuid, req, wait_time) for puuid, (req, wait_time) in zip(puuids, request_times)])
+                        # add participants to SummonerDB
+                        puuids = [participant['puuid'] for participant in new_match['info']['participants']]
+                        request_times = [ReqTimeCalc.initial() for _ in puuids]
+                        sum_db.put_multi(puuids, request_times, overwrite=False)
 
-                    # save match in the match database
-                    match_db.mark(match_id)
+                        # add match id to the explored match ids
+                        explored_match_ids.append(match_id)
+
+                finally:
+                    # mark explored matches in the match database
+                    match_db.mark_multi(explored_match_ids)
+                    # send update to main thread
+                    state_q.put((len(explored_match_ids), satisfaction))
 
             # catch the errors that just sometimes happen with web traffic.
-            except (requests.exceptions.HTTPError, requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
+            except (
+                requests.exceptions.HTTPError,
+                requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ReadTimeout,
+            ) as e:
                 # check if the API key has become unauthorized
                 if type(e) is requests.exceptions.HTTPError and e.response.status_code in (401, 403):
                     print(f"\n[ERROR {continent}] Unauthorized API Key, exiting...\n")
                     break
-
                 # print traceback for logs
                 else:
                     print(f"\n[ERROR {continent}]:")
@@ -123,10 +135,9 @@ def fetch_player(match_db: MatchDB, sum_db: SummonerDB, lolwatcher: rw.LolWatche
 
         # calculate initial request times
         request_times = [ReqTimeCalc.initial() for _ in puuids]
-        entries = [(puuid, request_time, wait_time) for puuid, (request_time, wait_time) in zip(puuids, request_times)]
 
         # insert them into the database
-        _, new = sum_db.put_multi(entries)
+        _, new = sum_db.put_multi(puuids, request_times, overwrite=False)
 
         # check if we already fetched all challengers :(
         if new == 0:
